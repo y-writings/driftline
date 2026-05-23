@@ -1,12 +1,12 @@
-package templatesync
+package driftline
 
 type Manifest struct {
-	Version   int                `yaml:"version"`
-	GitIgnore []string           `yaml:"gitignore,omitempty"`
-	Template  []ManifestTemplate `yaml:"templates"`
+	Version   int            `yaml:"version"`
+	GitIgnore []string       `yaml:"gitignore,omitempty"`
+	File      []ManifestFile `yaml:"files"`
 }
 
-type ManifestTemplate struct {
+type ManifestFile struct {
 	ID          string `yaml:"id"`
 	Source      string `yaml:"source"`
 	Target      string `yaml:"target"`

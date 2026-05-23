@@ -11,13 +11,13 @@ import (
 )
 
 func TestCheckDetectsMissingTarget(t *testing.T) {
-	templateDir := t.TempDir()
+	sourceDir := t.TempDir()
 	targetDir := t.TempDir()
-	writeFile(t, templateDir, "templates.yaml", "version: 1\ntemplates:\n  - id: sample\n    source: sample.txt\n    target: sample.txt\n")
-	writeFile(t, templateDir, "sample.txt", "hello\n")
+	writeFile(t, sourceDir, "driftline.yaml", "version: 1\nfiles:\n  - id: sample\n    source: sample.txt\n    target: sample.txt\n")
+	writeFile(t, sourceDir, "sample.txt", "hello\n")
 
 	var stdout, stderr bytes.Buffer
-	err := Run([]string{"check", "--template-dir", templateDir, "--target-dir", targetDir}, &stdout, &stderr)
+	err := Run([]string{"check", "--source-dir", sourceDir, "--target-dir", targetDir}, &stdout, &stderr)
 	if err == nil {
 		t.Fatal("expected drift error")
 	}
@@ -32,23 +32,41 @@ func TestRunAcceptsLeadingArgumentSeparator(t *testing.T) {
 	if err != nil {
 		t.Fatalf("help with argument separator failed: %v", err)
 	}
-	if !strings.Contains(stdout.String(), "usage: template-sync") {
+	if !strings.Contains(stdout.String(), "usage: driftline") {
 		t.Fatalf("expected usage output, got %q", stdout.String())
 	}
 }
 
-func TestUpdateCopiesFilesAndWritesLock(t *testing.T) {
-	templateDir := t.TempDir()
+func TestRejectsManifestWithoutFilesKey(t *testing.T) {
+	sourceDir := t.TempDir()
 	targetDir := t.TempDir()
-	writeFile(t, templateDir, "templates.yaml", "version: 1\ntemplates:\n  - id: sample\n    source: sample.txt\n    target: config/sample.txt\n")
-	writeFile(t, templateDir, "sample.txt", "hello\n")
+	writeFile(t, sourceDir, "driftline.yaml", "version: 1\n")
+
+	var stdout, stderr bytes.Buffer
+	err := Run([]string{"check", "--source-dir", sourceDir, "--target-dir", targetDir}, &stdout, &stderr)
+	if err == nil {
+		t.Fatal("expected missing files key to fail")
+	}
+	if !strings.Contains(err.Error(), "manifest must define files") {
+		t.Fatalf("expected missing files error, got %v", err)
+	}
+	if strings.Contains(stdout.String(), "synced") {
+		t.Fatalf("missing files key must not report synced, got %q", stdout.String())
+	}
+}
+
+func TestUpdateCopiesFilesAndWritesLock(t *testing.T) {
+	sourceDir := t.TempDir()
+	targetDir := t.TempDir()
+	writeFile(t, sourceDir, "driftline.yaml", "version: 1\nfiles:\n  - id: sample\n    source: sample.txt\n    target: config/sample.txt\n")
+	writeFile(t, sourceDir, "sample.txt", "hello\n")
 
 	var stdout, stderr bytes.Buffer
 	err := Run([]string{
 		"update",
-		"--template-dir", templateDir,
+		"--source-dir", sourceDir,
 		"--target-dir", targetDir,
-		"--repository", "y-writings/templates",
+		"--repository", "y-writings/driftline",
 		"--ref", "v2026.05.01",
 	}, &stdout, &stderr)
 	if err != nil {
@@ -59,8 +77,8 @@ func TestUpdateCopiesFilesAndWritesLock(t *testing.T) {
 	if got != "hello\n" {
 		t.Fatalf("unexpected target content: %q", got)
 	}
-	lock := readFile(t, targetDir, ".template-sync.lock")
-	for _, want := range []string{"repository: y-writings/templates", "ref: v2026.05.01", "sample:", "target: config/sample.txt", "source_sha256:"} {
+	lock := readFile(t, targetDir, ".driftline.lock")
+	for _, want := range []string{"repository: y-writings/driftline", "ref: v2026.05.01", "sample:", "target: config/sample.txt", "source_sha256:"} {
 		if !strings.Contains(lock, want) {
 			t.Fatalf("lock file missing %q:\n%s", want, lock)
 		}
@@ -68,34 +86,34 @@ func TestUpdateCopiesFilesAndWritesLock(t *testing.T) {
 }
 
 func TestUpdateCreatesNestedLockParents(t *testing.T) {
-	templateDir := t.TempDir()
+	sourceDir := t.TempDir()
 	targetDir := t.TempDir()
-	writeFile(t, templateDir, "templates.yaml", "version: 1\ntemplates:\n  - id: sample\n    source: sample.txt\n    target: sample.txt\n")
-	writeFile(t, templateDir, "sample.txt", "hello\n")
+	writeFile(t, sourceDir, "driftline.yaml", "version: 1\nfiles:\n  - id: sample\n    source: sample.txt\n    target: sample.txt\n")
+	writeFile(t, sourceDir, "sample.txt", "hello\n")
 
 	var stdout, stderr bytes.Buffer
 	err := Run([]string{
 		"update",
-		"--template-dir", templateDir,
+		"--source-dir", sourceDir,
 		"--target-dir", targetDir,
-		"--lock", ".config/template-sync.lock",
+		"--lock", ".config/driftline.lock",
 	}, &stdout, &stderr)
 	if err != nil {
 		t.Fatalf("update failed: %v\nstderr: %s", err, stderr.String())
 	}
-	if lock := readFile(t, targetDir, ".config/template-sync.lock"); !strings.Contains(lock, "sample:") {
+	if lock := readFile(t, targetDir, ".config/driftline.lock"); !strings.Contains(lock, "sample:") {
 		t.Fatalf("nested lock was not written correctly:\n%s", lock)
 	}
 }
 
 func TestRejectsManifestPathsThatEscapeRoots(t *testing.T) {
-	templateDir := t.TempDir()
+	sourceDir := t.TempDir()
 	targetDir := t.TempDir()
-	writeFile(t, templateDir, "templates.yaml", "version: 1\ntemplates:\n  - id: sample\n    source: sample.txt\n    target: ../outside.txt\n")
-	writeFile(t, templateDir, "sample.txt", "hello\n")
+	writeFile(t, sourceDir, "driftline.yaml", "version: 1\nfiles:\n  - id: sample\n    source: sample.txt\n    target: ../outside.txt\n")
+	writeFile(t, sourceDir, "sample.txt", "hello\n")
 
 	var stdout, stderr bytes.Buffer
-	err := Run([]string{"update", "--template-dir", templateDir, "--target-dir", targetDir}, &stdout, &stderr)
+	err := Run([]string{"update", "--source-dir", sourceDir, "--target-dir", targetDir}, &stdout, &stderr)
 	if err == nil {
 		t.Fatal("expected escaping target path to fail")
 	}
@@ -105,13 +123,13 @@ func TestRejectsManifestPathsThatEscapeRoots(t *testing.T) {
 }
 
 func TestRejectsLockTargetsThatEscapeRoots(t *testing.T) {
-	templateDir := t.TempDir()
+	sourceDir := t.TempDir()
 	targetDir := t.TempDir()
-	writeFile(t, templateDir, "templates.yaml", "version: 1\ntemplates: []\n")
-	writeFile(t, targetDir, ".template-sync.lock", "files:\n  old:\n    target: ../outside.txt\n    source_sha256: 0000\n")
+	writeFile(t, sourceDir, "driftline.yaml", "version: 1\nfiles: []\n")
+	writeFile(t, targetDir, ".driftline.lock", "files:\n  old:\n    target: ../outside.txt\n    source_sha256: 0000\n")
 
 	var stdout, stderr bytes.Buffer
-	err := Run([]string{"prune", "--template-dir", templateDir, "--target-dir", targetDir}, &stdout, &stderr)
+	err := Run([]string{"prune", "--source-dir", sourceDir, "--target-dir", targetDir}, &stdout, &stderr)
 	if err == nil {
 		t.Fatal("expected escaping lock target path to fail")
 	}
@@ -121,15 +139,15 @@ func TestRejectsLockTargetsThatEscapeRoots(t *testing.T) {
 }
 
 func TestPruneRemovesOnlyUnchangedStaleFiles(t *testing.T) {
-	templateDir := t.TempDir()
+	sourceDir := t.TempDir()
 	targetDir := t.TempDir()
-	writeFile(t, templateDir, "templates.yaml", "version: 1\ntemplates: []\n")
+	writeFile(t, sourceDir, "driftline.yaml", "version: 1\nfiles: []\n")
 	writeFile(t, targetDir, "old.txt", "old\n")
 	hash := hashFile(t, filepath.Join(targetDir, "old.txt"))
-	writeFile(t, targetDir, ".template-sync.lock", "files:\n  old:\n    target: old.txt\n    source_sha256: "+hash+"\n")
+	writeFile(t, targetDir, ".driftline.lock", "files:\n  old:\n    target: old.txt\n    source_sha256: "+hash+"\n")
 
 	var stdout, stderr bytes.Buffer
-	err := Run([]string{"prune", "--template-dir", templateDir, "--target-dir", targetDir}, &stdout, &stderr)
+	err := Run([]string{"prune", "--source-dir", sourceDir, "--target-dir", targetDir}, &stdout, &stderr)
 	if err != nil {
 		t.Fatalf("prune failed: %v\nstderr: %s", err, stderr.String())
 	}
@@ -139,14 +157,14 @@ func TestPruneRemovesOnlyUnchangedStaleFiles(t *testing.T) {
 }
 
 func TestPruneKeepsLocallyChangedStaleFiles(t *testing.T) {
-	templateDir := t.TempDir()
+	sourceDir := t.TempDir()
 	targetDir := t.TempDir()
-	writeFile(t, templateDir, "templates.yaml", "version: 1\ntemplates: []\n")
+	writeFile(t, sourceDir, "driftline.yaml", "version: 1\nfiles: []\n")
 	writeFile(t, targetDir, "old.txt", "changed\n")
-	writeFile(t, targetDir, ".template-sync.lock", "files:\n  old:\n    target: old.txt\n    source_sha256: 0000\n")
+	writeFile(t, targetDir, ".driftline.lock", "files:\n  old:\n    target: old.txt\n    source_sha256: 0000\n")
 
 	var stdout, stderr bytes.Buffer
-	err := Run([]string{"prune", "--template-dir", templateDir, "--target-dir", targetDir}, &stdout, &stderr)
+	err := Run([]string{"prune", "--source-dir", sourceDir, "--target-dir", targetDir}, &stdout, &stderr)
 	if err != nil {
 		t.Fatalf("prune failed: %v\nstderr: %s", err, stderr.String())
 	}
@@ -189,14 +207,14 @@ func hashFile(t *testing.T, path string) string {
 }
 
 func TestUpdateAddsConfiguredGitIgnoreEntries(t *testing.T) {
-	templateDir := t.TempDir()
+	sourceDir := t.TempDir()
 	targetDir := t.TempDir()
-	writeFile(t, templateDir, "templates.yaml", "version: 1\ngitignore:\n  - .gh\n  - .cache/tool\ntemplates:\n  - id: sample\n    source: sample.txt\n    target: sample.txt\n")
-	writeFile(t, templateDir, "sample.txt", "hello\n")
+	writeFile(t, sourceDir, "driftline.yaml", "version: 1\ngitignore:\n  - .gh\n  - .cache/tool\nfiles:\n  - id: sample\n    source: sample.txt\n    target: sample.txt\n")
+	writeFile(t, sourceDir, "sample.txt", "hello\n")
 	writeFile(t, targetDir, ".gitignore", "node_modules\n")
 
 	var stdout, stderr bytes.Buffer
-	err := Run([]string{"update", "--template-dir", templateDir, "--target-dir", targetDir}, &stdout, &stderr)
+	err := Run([]string{"update", "--source-dir", sourceDir, "--target-dir", targetDir}, &stdout, &stderr)
 	if err != nil {
 		t.Fatalf("update failed: %v", err)
 	}
@@ -209,22 +227,22 @@ func TestUpdateAddsConfiguredGitIgnoreEntries(t *testing.T) {
 }
 
 func TestIfNotExistsSkipsUpdateAndPrunesWhenUnchanged(t *testing.T) {
-	templateDir := t.TempDir()
+	sourceDir := t.TempDir()
 	targetDir := t.TempDir()
-	writeFile(t, templateDir, "templates.yaml", "version: 1\ntemplates:\n  - id: sample\n    source: sample.txt\n    target: sample.txt\n    if_not_exists: true\n")
-	writeFile(t, templateDir, "sample.txt", "from-template\n")
+	writeFile(t, sourceDir, "driftline.yaml", "version: 1\nfiles:\n  - id: sample\n    source: sample.txt\n    target: sample.txt\n    if_not_exists: true\n")
+	writeFile(t, sourceDir, "sample.txt", "from-source\n")
 	writeFile(t, targetDir, "sample.txt", "local\n")
 
 	var stdout, stderr bytes.Buffer
-	err := Run([]string{"update", "--template-dir", templateDir, "--target-dir", targetDir}, &stdout, &stderr)
+	err := Run([]string{"update", "--source-dir", sourceDir, "--target-dir", targetDir}, &stdout, &stderr)
 	if err != nil {
 		t.Fatalf("update failed: %v", err)
 	}
 	if got := readFile(t, targetDir, "sample.txt"); got != "local\n" {
 		t.Fatalf("expected existing file to remain unchanged, got %q", got)
 	}
-	writeFile(t, templateDir, "templates.yaml", "version: 1\ntemplates: []\n")
-	err = Run([]string{"prune", "--template-dir", templateDir, "--target-dir", targetDir}, &stdout, &stderr)
+	writeFile(t, sourceDir, "driftline.yaml", "version: 1\nfiles: []\n")
+	err = Run([]string{"prune", "--source-dir", sourceDir, "--target-dir", targetDir}, &stdout, &stderr)
 	if err != nil {
 		t.Fatalf("prune failed: %v", err)
 	}
@@ -234,24 +252,24 @@ func TestIfNotExistsSkipsUpdateAndPrunesWhenUnchanged(t *testing.T) {
 }
 
 func TestIfNotExistsKeepsInitialLockHashAcrossUpdates(t *testing.T) {
-	templateDir := t.TempDir()
+	sourceDir := t.TempDir()
 	targetDir := t.TempDir()
-	writeFile(t, templateDir, "templates.yaml", "version: 1\ntemplates:\n  - id: sample\n    source: sample.txt\n    target: sample.txt\n    if_not_exists: true\n")
-	writeFile(t, templateDir, "sample.txt", "from-template\n")
+	writeFile(t, sourceDir, "driftline.yaml", "version: 1\nfiles:\n  - id: sample\n    source: sample.txt\n    target: sample.txt\n    if_not_exists: true\n")
+	writeFile(t, sourceDir, "sample.txt", "from-source\n")
 	writeFile(t, targetDir, "sample.txt", "initial-local\n")
 
 	var stdout, stderr bytes.Buffer
-	if err := Run([]string{"update", "--template-dir", templateDir, "--target-dir", targetDir}, &stdout, &stderr); err != nil {
+	if err := Run([]string{"update", "--source-dir", sourceDir, "--target-dir", targetDir}, &stdout, &stderr); err != nil {
 		t.Fatalf("first update failed: %v", err)
 	}
 
 	writeFile(t, targetDir, "sample.txt", "edited-local\n")
-	if err := Run([]string{"update", "--template-dir", templateDir, "--target-dir", targetDir}, &stdout, &stderr); err != nil {
+	if err := Run([]string{"update", "--source-dir", sourceDir, "--target-dir", targetDir}, &stdout, &stderr); err != nil {
 		t.Fatalf("second update failed: %v", err)
 	}
 
-	writeFile(t, templateDir, "templates.yaml", "version: 1\ntemplates: []\n")
-	if err := Run([]string{"prune", "--template-dir", templateDir, "--target-dir", targetDir}, &stdout, &stderr); err != nil {
+	writeFile(t, sourceDir, "driftline.yaml", "version: 1\nfiles: []\n")
+	if err := Run([]string{"prune", "--source-dir", sourceDir, "--target-dir", targetDir}, &stdout, &stderr); err != nil {
 		t.Fatalf("prune failed: %v", err)
 	}
 	if got := readFile(t, targetDir, "sample.txt"); got != "edited-local\n" {
@@ -263,25 +281,25 @@ func TestIfNotExistsKeepsInitialLockHashAcrossUpdates(t *testing.T) {
 }
 
 func TestIfNotExistsResetsLockHashWhenTargetPathChanges(t *testing.T) {
-	templateDir := t.TempDir()
+	sourceDir := t.TempDir()
 	targetDir := t.TempDir()
-	writeFile(t, templateDir, "templates.yaml", "version: 1\ntemplates:\n  - id: sample\n    source: sample.txt\n    target: old.txt\n    if_not_exists: true\n")
-	writeFile(t, templateDir, "sample.txt", "from-template\n")
+	writeFile(t, sourceDir, "driftline.yaml", "version: 1\nfiles:\n  - id: sample\n    source: sample.txt\n    target: old.txt\n    if_not_exists: true\n")
+	writeFile(t, sourceDir, "sample.txt", "from-source\n")
 	writeFile(t, targetDir, "old.txt", "old-local\n")
 
 	var stdout, stderr bytes.Buffer
-	if err := Run([]string{"update", "--template-dir", templateDir, "--target-dir", targetDir}, &stdout, &stderr); err != nil {
+	if err := Run([]string{"update", "--source-dir", sourceDir, "--target-dir", targetDir}, &stdout, &stderr); err != nil {
 		t.Fatalf("first update failed: %v", err)
 	}
 
-	writeFile(t, templateDir, "templates.yaml", "version: 1\ntemplates:\n  - id: sample\n    source: sample.txt\n    target: new.txt\n    if_not_exists: true\n")
+	writeFile(t, sourceDir, "driftline.yaml", "version: 1\nfiles:\n  - id: sample\n    source: sample.txt\n    target: new.txt\n    if_not_exists: true\n")
 	writeFile(t, targetDir, "new.txt", "new-local\n")
-	if err := Run([]string{"update", "--template-dir", templateDir, "--target-dir", targetDir}, &stdout, &stderr); err != nil {
+	if err := Run([]string{"update", "--source-dir", sourceDir, "--target-dir", targetDir}, &stdout, &stderr); err != nil {
 		t.Fatalf("second update failed: %v", err)
 	}
 
-	writeFile(t, templateDir, "templates.yaml", "version: 1\ntemplates: []\n")
-	if err := Run([]string{"prune", "--template-dir", templateDir, "--target-dir", targetDir}, &stdout, &stderr); err != nil {
+	writeFile(t, sourceDir, "driftline.yaml", "version: 1\nfiles: []\n")
+	if err := Run([]string{"prune", "--source-dir", sourceDir, "--target-dir", targetDir}, &stdout, &stderr); err != nil {
 		t.Fatalf("prune failed: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(targetDir, "new.txt")); !os.IsNotExist(err) {

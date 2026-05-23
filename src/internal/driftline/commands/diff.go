@@ -7,25 +7,25 @@ import (
 	"os"
 	"os/exec"
 
-	"github.com/y-writings/templates/src/internal/templatesync"
+	"github.com/y-writings/driftline/src/internal/driftline"
 )
 
-func runDiff(opts templatesync.Options, stdout io.Writer) error {
-	_, _, changes, err := templatesync.BuildPlan(opts)
+func runDiff(opts driftline.Options, stdout io.Writer) error {
+	_, _, changes, err := driftline.BuildPlan(opts)
 	if err != nil {
 		return err
 	}
 	for _, change := range sortedChanges(changes) {
 		switch change.Status {
-		case templatesync.StatusAdd, templatesync.StatusUpdate:
-			if err := printGitDiff(stdout, change.SourcePath, change.TargetPath, change.Status == templatesync.StatusAdd); err != nil {
+		case driftline.StatusAdd, driftline.StatusUpdate:
+			if err := printGitDiff(stdout, change.SourcePath, change.TargetPath, change.Status == driftline.StatusAdd); err != nil {
 				return err
 			}
-		case templatesync.StatusPrune, templatesync.StatusConflict:
+		case driftline.StatusPrune, driftline.StatusConflict:
 			fmt.Fprintf(stdout, "%s %s: %s\n", change.Status, change.ID, change.Reason)
 		}
 	}
-	if templatesync.HasDrift(changes) {
+	if driftline.HasDrift(changes) {
 		return errDrift
 	}
 	return nil

@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/y-writings/templates/src/internal/templatesync"
+	"github.com/y-writings/driftline/src/internal/driftline"
 )
 
-var errDrift = errors.New("template drift detected")
+var errDrift = errors.New("drift detected")
 
 func Run(args []string, stdout, stderr io.Writer) error {
 	if len(args) > 0 && args[0] == "--" {
@@ -46,13 +46,13 @@ func Run(args []string, stdout, stderr io.Writer) error {
 	}
 }
 
-func parseOptions(args []string, stderr io.Writer) (templatesync.Options, []string, error) {
-	opts := templatesync.DefaultOptions()
-	fs := flag.NewFlagSet("template-sync", flag.ContinueOnError)
+func parseOptions(args []string, stderr io.Writer) (driftline.Options, []string, error) {
+	opts := driftline.DefaultOptions()
+	fs := flag.NewFlagSet("driftline", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	fs.StringVar(&opts.ManifestPath, "manifest", opts.ManifestPath, "manifest path relative to template dir")
+	fs.StringVar(&opts.ManifestPath, "manifest", opts.ManifestPath, "manifest path relative to source dir")
 	fs.StringVar(&opts.LockPath, "lock", opts.LockPath, "lock file path relative to target dir")
-	fs.StringVar(&opts.TemplateDir, "template-dir", opts.TemplateDir, "template repository directory")
+	fs.StringVar(&opts.SourceDir, "source-dir", opts.SourceDir, "source directory")
 	fs.StringVar(&opts.TargetDir, "target-dir", opts.TargetDir, "target repository directory")
 	fs.StringVar(&opts.Repository, "repository", opts.Repository, "repository value written to lock file")
 	fs.StringVar(&opts.Ref, "ref", opts.Ref, "ref value written to lock file")
@@ -63,19 +63,19 @@ func parseOptions(args []string, stderr io.Writer) (templatesync.Options, []stri
 }
 
 func printUsage(w io.Writer) {
-	fmt.Fprintln(w, `usage: template-sync <command> [options]
+	fmt.Fprintln(w, `usage: driftline <command> [options]
 
 commands:
-  check   check whether target files match the template
+  check   check whether target files match the source files
   diff    show diffs for files that would be added or updated
   update  copy added/updated files and refresh the lock file
   prune   remove manifest-deleted files when they are unchanged locally
 
 options:
-  --template-dir string  template repository directory (default ".")
-  --target-dir string    target repository directory (default ".")
-  --manifest string      manifest path relative to template dir (default "templates.yaml")
-  --lock string          lock file path relative to target dir (default ".template-sync.lock")
-  --repository string    repository value written to lock file
-  --ref string           ref value written to lock file`)
+  --source-dir string  source directory (default ".")
+  --target-dir string  target repository directory (default ".")
+  --manifest string    manifest path relative to source dir (default "driftline.yaml")
+  --lock string        lock file path relative to target dir (default ".driftline.lock")
+  --repository string  repository value written to lock file
+  --ref string         ref value written to lock file`)
 }

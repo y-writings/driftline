@@ -1,4 +1,4 @@
-package templatesync
+package driftline
 
 import (
 	"crypto/sha256"
@@ -18,26 +18,48 @@ func loadManifest(path string) (Manifest, error) {
 	if err != nil {
 		return manifest, fmt.Errorf("read manifest: %w", err)
 	}
-	if err := yaml.Unmarshal(data, &manifest); err != nil {
+	var document yaml.Node
+	if err := yaml.Unmarshal(data, &document); err != nil {
+		return manifest, fmt.Errorf("parse manifest: %w", err)
+	}
+	if err := document.Decode(&manifest); err != nil {
 		return manifest, fmt.Errorf("parse manifest: %w", err)
 	}
 	if manifest.Version != 1 {
 		return manifest, fmt.Errorf("unsupported manifest version %d", manifest.Version)
 	}
+	if !hasManifestKey(&document, "files") {
+		return manifest, errors.New("manifest must define files")
+	}
 	seen := map[string]struct{}{}
-	for _, item := range manifest.Template {
+	for _, item := range manifest.File {
 		if item.ID == "" {
-			return manifest, errors.New("manifest contains template without id")
+			return manifest, errors.New("manifest contains file without id")
 		}
 		if item.Source == "" || item.Target == "" {
-			return manifest, fmt.Errorf("template %q must define source and target", item.ID)
+			return manifest, fmt.Errorf("file %q must define source and target", item.ID)
 		}
 		if _, ok := seen[item.ID]; ok {
-			return manifest, fmt.Errorf("duplicate template id %q", item.ID)
+			return manifest, fmt.Errorf("duplicate file id %q", item.ID)
 		}
 		seen[item.ID] = struct{}{}
 	}
 	return manifest, nil
+}
+
+func hasManifestKey(document *yaml.Node, key string) bool {
+	if document.Kind == yaml.DocumentNode && len(document.Content) > 0 {
+		document = document.Content[0]
+	}
+	if document.Kind != yaml.MappingNode {
+		return false
+	}
+	for i := 0; i < len(document.Content)-1; i += 2 {
+		if document.Content[i].Value == key {
+			return true
+		}
+	}
+	return false
 }
 
 func loadLock(path string) (LockFile, error) {
@@ -121,7 +143,6 @@ func pathWithin(root, name, label string) (string, error) {
 	}
 	return fullPath, nil
 }
-
 
 func EnsureGitIgnore(path string, entries []string) error {
 	if len(entries) == 0 {

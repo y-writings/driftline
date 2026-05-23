@@ -1,4 +1,4 @@
-package templatesync
+package driftline
 
 import (
 	"fmt"
@@ -7,7 +7,7 @@ import (
 type Options struct {
 	ManifestPath string
 	LockPath     string
-	TemplateDir  string
+	SourceDir    string
 	TargetDir    string
 	Repository   string
 	Ref          string
@@ -15,15 +15,15 @@ type Options struct {
 
 func DefaultOptions() Options {
 	return Options{
-		ManifestPath: "templates.yaml",
-		LockPath:     ".template-sync.lock",
-		TemplateDir:  ".",
+		ManifestPath: "driftline.yaml",
+		LockPath:     ".driftline.lock",
+		SourceDir:    ".",
 		TargetDir:    ".",
 	}
 }
 
 func BuildPlan(opts Options) (Manifest, LockFile, []Change, error) {
-	manifestPath, err := pathWithin(opts.TemplateDir, opts.ManifestPath, "manifest")
+	manifestPath, err := pathWithin(opts.SourceDir, opts.ManifestPath, "manifest")
 	if err != nil {
 		return Manifest{}, LockFile{}, nil, err
 	}
@@ -40,11 +40,11 @@ func BuildPlan(opts Options) (Manifest, LockFile, []Change, error) {
 		return manifest, lock, nil, err
 	}
 
-	manifestIDs := map[string]ManifestTemplate{}
+	manifestIDs := map[string]ManifestFile{}
 	var changes []Change
-	for _, item := range manifest.Template {
+	for _, item := range manifest.File {
 		manifestIDs[item.ID] = item
-		sourcePath, err := pathWithin(opts.TemplateDir, item.Source, fmt.Sprintf("source %q", item.ID))
+		sourcePath, err := pathWithin(opts.SourceDir, item.Source, fmt.Sprintf("source %q", item.ID))
 		if err != nil {
 			return manifest, lock, nil, err
 		}
@@ -83,7 +83,7 @@ func BuildPlan(opts Options) (Manifest, LockFile, []Change, error) {
 			change.Reason = "if_not_exists is enabled and target exists"
 		case currentHash != sourceHash:
 			change.Status = StatusUpdate
-			change.Reason = "target differs from template"
+			change.Reason = "target differs from source"
 		}
 		changes = append(changes, change)
 	}
@@ -106,11 +106,11 @@ func BuildPlan(opts Options) (Manifest, LockFile, []Change, error) {
 			CurrentHash: currentHash,
 			LockedHash:  item.SourceSHA256,
 			Status:      StatusPrune,
-			Reason:      "template was removed from manifest",
+			Reason:      "source was removed from manifest",
 		}
 		if targetExists && currentHash != item.SourceSHA256 {
 			change.Status = StatusConflict
-			change.Reason = "template was removed, but target has local changes"
+			change.Reason = "source was removed, but target has local changes"
 		}
 		changes = append(changes, change)
 	}
