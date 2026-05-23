@@ -18,11 +18,18 @@ func loadManifest(path string) (Manifest, error) {
 	if err != nil {
 		return manifest, fmt.Errorf("read manifest: %w", err)
 	}
-	if err := yaml.Unmarshal(data, &manifest); err != nil {
+	var document yaml.Node
+	if err := yaml.Unmarshal(data, &document); err != nil {
+		return manifest, fmt.Errorf("parse manifest: %w", err)
+	}
+	if err := document.Decode(&manifest); err != nil {
 		return manifest, fmt.Errorf("parse manifest: %w", err)
 	}
 	if manifest.Version != 1 {
 		return manifest, fmt.Errorf("unsupported manifest version %d", manifest.Version)
+	}
+	if !hasManifestKey(&document, "files") {
+		return manifest, errors.New("manifest must define files")
 	}
 	seen := map[string]struct{}{}
 	for _, item := range manifest.File {
@@ -38,6 +45,21 @@ func loadManifest(path string) (Manifest, error) {
 		seen[item.ID] = struct{}{}
 	}
 	return manifest, nil
+}
+
+func hasManifestKey(document *yaml.Node, key string) bool {
+	if document.Kind == yaml.DocumentNode && len(document.Content) > 0 {
+		document = document.Content[0]
+	}
+	if document.Kind != yaml.MappingNode {
+		return false
+	}
+	for i := 0; i < len(document.Content)-1; i += 2 {
+		if document.Content[i].Value == key {
+			return true
+		}
+	}
+	return false
 }
 
 func loadLock(path string) (LockFile, error) {

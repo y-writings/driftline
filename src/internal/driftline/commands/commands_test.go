@@ -37,6 +37,24 @@ func TestRunAcceptsLeadingArgumentSeparator(t *testing.T) {
 	}
 }
 
+func TestRejectsManifestWithoutFilesKey(t *testing.T) {
+	sourceDir := t.TempDir()
+	targetDir := t.TempDir()
+	writeFile(t, sourceDir, "driftline.yaml", "version: 1\n")
+
+	var stdout, stderr bytes.Buffer
+	err := Run([]string{"check", "--source-dir", sourceDir, "--target-dir", targetDir}, &stdout, &stderr)
+	if err == nil {
+		t.Fatal("expected missing files key to fail")
+	}
+	if !strings.Contains(err.Error(), "manifest must define files") {
+		t.Fatalf("expected missing files error, got %v", err)
+	}
+	if strings.Contains(stdout.String(), "synced") {
+		t.Fatalf("missing files key must not report synced, got %q", stdout.String())
+	}
+}
+
 func TestUpdateCopiesFilesAndWritesLock(t *testing.T) {
 	sourceDir := t.TempDir()
 	targetDir := t.TempDir()
