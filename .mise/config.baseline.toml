@@ -1,0 +1,35 @@
+[env]
+GH_CONFIG_DIR="{{config_root}}/.gh"
+
+
+[tasks."baseline:setup"]
+description = "Reset generated Git hooks and reinstall managed hooks"
+run = [
+    { task = "baseline:hooks:reset" },
+    "lefthook install",
+    "entire enable --agent opencode"
+]
+
+[tasks."baseline:pin"]
+description = "Pin repository references with pinact and dockerfile-pin"
+run = ["pinact run --check --fix", "dockerfile-pin run --write"]
+
+[tasks."baseline:scan"]
+description = "Scan all repository files with betterleaks"
+run = ["betterleaks dir --no-banner --redact=20 ."]
+
+[tasks."baseline:hooks:reset"]
+hide=true
+confirm = "This will remove and recreate Git hooks. Continue?"
+run = '''
+#!/usr/bin/env bash
+set -euo pipefail
+
+git rev-parse --is-inside-work-tree >/dev/null
+git config --local --unset-all core.hooksPath || true
+
+common_git_dir="$(git rev-parse --path-format=absolute --git-common-dir)"
+hooks_dir="$common_git_dir/hooks"
+rm -rf -- "$hooks_dir"
+mkdir -p -- "$hooks_dir"
+'''

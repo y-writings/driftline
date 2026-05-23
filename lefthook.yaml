@@ -1,0 +1,9 @@
+pre-commit:
+  commands:
+    betterleaks:
+      run: betterleaks git --staged --no-banner --redact=20
+
+commit-msg:
+  commands:
+    commitlint:
+      run: commitlint --config .commitlintrc.yaml --edit {1}

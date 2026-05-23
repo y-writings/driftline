@@ -1,0 +1,73 @@
+name: Add Entire checkpoints to PR body
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, edited, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  update-pr-body:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Collect checkpoints and update PR body
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
+        with:
+          script: |
+            const markerStart = "<!-- entire-checkpoints:start -->";
+            const markerEnd = "<!-- entire-checkpoints:end -->";
+            const heading = "## Entire checkpoints";
+
+            const { owner, repo } = context.repo;
+            const pull_number = context.payload.pull_request.number;
+            const baseSha = context.payload.pull_request.base.sha;
+            const headSha = context.payload.pull_request.head.sha;
+
+            const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number });
+            const currentBody = pr.body || "";
+
+            const commits = await github.paginate(
+              github.rest.repos.compareCommitsWithBasehead,
+              {
+                owner,
+                repo,
+                basehead: `${baseSha}...${headSha}`,
+                per_page: 100,
+              },
+              (response) => response.data.commits,
+            );
+
+            const checkpoints = [...new Set(
+              commits
+                .flatMap((c) => (c.commit.message || "").split(/\r?\n/))
+                .map((line) => line.trim())
+                .filter((line) => /^Entire-Checkpoint:\s*\S+/.test(line))
+            )].sort((a, b) => a.localeCompare(b));
+
+            const section = [
+              markerStart,
+              heading,
+              "",
+              checkpoints.length > 0
+                ? checkpoints.join("\n")
+                : "_No Entire checkpoints found._",
+              markerEnd,
+            ].join("\n");
+
+            const escapedStart = markerStart.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+            const escapedEnd = markerEnd.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+            const markerRegex = new RegExp(`${escapedStart}[\\s\\S]*?${escapedEnd}`, "m");
+
+            const updatedBody = markerRegex.test(currentBody)
+              ? currentBody.replace(markerRegex, section)
+              : `${currentBody.trim()}\n\n${section}`.trim();
+
+            if (updatedBody === currentBody) {
+              core.info("PR body already up-to-date.");
+              return;
+            }
+
+            await github.rest.pulls.update({ owner, repo, pull_number, body: updatedBody });
+            core.info(`Updated PR #${pull_number} with ${checkpoints.length} checkpoint(s).`);

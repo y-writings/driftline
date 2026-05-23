@@ -1,0 +1,40 @@
+files:
+    LICENSE:
+        target: LICENSE
+        source_sha256: 37145962235ad3da0c3a6264a9f3364a6f9c4a03094cd84208ae8233be3de9cf
+    commitlint:
+        target: .commitlintrc.yaml
+        source_sha256: 4904aa7d8619612c3f9046b63871abdd540e66309251c2810bb3f91279951893
+    entire-entire-ts:
+        target: .opencode/plugins/entire.ts
+        source_sha256: 04e812ea81c7cd47be717d2ce2ed011510a6cbd8673c9a34b5030d6aa13a7b43
+    entire-gitignore:
+        target: .entire/.gitignore
+        source_sha256: 05d8f1ee317721d6a247c60bd9553ed3b1739060ccb8566f1c9ae49c2f310e2b
+    entire-settings-json:
+        target: .entire/settings.json
+        source_sha256: 0a857f7e0a16b5783513f9b33848ca96695262bfa259da16a9304ac840e0af77
+    github-workflow-add-entire-checkpoints-to-pr-body:
+        target: .github/workflows/add-entire-checkpoints-to-pr-body.yaml
+        source_sha256: bc46375d6ae3fb1b4ceb05e3099dca37acc45dc3111436b797c5149d4ffda944
+    github-workflow-scan:
+        target: .github/workflows/scan.yaml
+        source_sha256: a3f8d3e1d5b0d397ac8efa6ffe36832063bf9a2cfb9ee80797b5b58c4ae79489
+    github-workflow-semantic-pr:
+        target: .github/workflows/semantic-pr.yaml
+        source_sha256: 77a0c22753b05c7ffdf4e156c9751aff18ad7726acc3e2deac9b22164d6291eb
+    lefthook:
+        target: lefthook.yaml
+        source_sha256: e41e33901b56b83da4ad86aca373f4df1cac87e1d1a2fef3bf9a8a6179d1834c
+    mise-baseline:
+        target: .mise/config.baseline.toml
+        source_sha256: f9cba3b8bfdb26d6d787b39929b06e4dcad69bb6721af5eedd6e0d2ffe688080
+    mise-project:
+        target: .mise/config.toml
+        source_sha256: 91243feb23574b36f7fb1ae07eca9d415f8c078d6d66da6c9abe63043ea7b631
+    mise-rc:
+        target: .miserc.toml
+        source_sha256: 022bcf0fcf45556c8952b36a70df1270e5fa20cb4164a0a2c10096a97c6f0d65
+    pinact:
+        target: .pinact.yaml
+        source_sha256: 37011862a264fca51b15b5884b4647da821e0b60de7012e6074157d5eb3281df
