@@ -16,7 +16,7 @@
 - Modify: `go.mod` - update `go` directive to `1.26` and add `toolchain go1.26.3`.
 - Modify: `.mise/config.toml` - update Go tool version to `1.26.3`.
 - Existing test target: `go test ./...`.
-- Existing build target: `./src/cmd/template-sync`.
+- Existing build target: `./src/cmd/driftline`.
 
 ## Task 1: Update Go Toolchain Settings
 
@@ -29,7 +29,7 @@
 Change `go.mod` to:
 
 ```go.mod
-module github.com/y-writings/templates
+module github.com/y-writings/driftline
 
 go 1.26
 
@@ -83,14 +83,14 @@ FROM base AS builder
 COPY go.mod go.sum ./
 RUN go mod download
 COPY src ./src
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -o /out/template-sync ./src/cmd/template-sync
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -o /out/driftline ./src/cmd/driftline
 
 FROM debian:bookworm-slim AS runtime
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
-COPY --from=builder /out/template-sync /usr/local/bin/template-sync
-ENTRYPOINT ["template-sync"]
+COPY --from=builder /out/driftline /usr/local/bin/driftline
+ENTRYPOINT ["driftline"]
 ```
 
 ## Task 3: Verify Changes
@@ -114,7 +114,7 @@ Expected: image builds successfully.
 
 - [ ] **Step 3: Build runtime image target**
 
-Run: `docker build -t driftline-template-sync .`
+Run: `docker build -t driftline .`
 
 Expected: image builds successfully.
 

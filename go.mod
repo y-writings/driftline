@@ -1,4 +1,4 @@
-module github.com/y-writings/templates
+module github.com/y-writings/driftline
 
 go 1.26
 

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/y-writings/templates/src/internal/templatesync/commands"
+	"github.com/y-writings/driftline/src/internal/driftline/commands"
 )
 
 func main() {

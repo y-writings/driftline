@@ -9,7 +9,7 @@ Add Docker support for both development and runtime use, and align the repositor
 - The repository currently has a Go module at `go.mod` using `go 1.22`.
 - mise is configured in `.mise/config.toml` with `go = "1.22.12"`.
 - No Dockerfile currently exists.
-- The main command builds from `./src/cmd/template-sync`.
+- The main command builds from `./src/cmd/driftline`.
 
 ## Chosen Approach
 
@@ -17,7 +17,7 @@ Use a multi-stage root `Dockerfile` with separate `dev`, `builder`, and runtime 
 
 The `dev` target will use the official Go image, install only basic development dependencies such as `git` and `ca-certificates`, and set `/workspace` as the working directory. This keeps local tool development straightforward without turning the runtime image into a heavy development environment.
 
-The `builder` target will compile `./src/cmd/template-sync` with `CGO_ENABLED=0` into a Linux binary under `/out/template-sync`.
+The `builder` target will compile `./src/cmd/driftline` with `CGO_ENABLED=0` into a Linux binary under `/out/driftline`.
 
 The final runtime target will use `debian:bookworm-slim`, install `ca-certificates`, copy in only the built binary, and set it as the entrypoint.
 
