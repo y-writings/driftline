@@ -21,6 +21,7 @@ COPY src ./src
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -o /out/template-sync ./src/cmd/template-sync
 
 FROM debian:bookworm-slim AS runtime
+WORKDIR /workspace
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
