@@ -106,6 +106,10 @@ func fileHash(path string) (string, bool, error) {
 	return hex.EncodeToString(sum[:]), true, nil
 }
 
+func FileHash(path string) (string, bool, error) {
+	return fileHash(path)
+}
+
 func CopyFile(source, target string) error {
 	data, err := os.ReadFile(source)
 	if err != nil {
@@ -142,6 +146,10 @@ func pathWithin(root, name, label string) (string, error) {
 		return "", fmt.Errorf("%s path escapes root: %s", label, name)
 	}
 	return fullPath, nil
+}
+
+func PathWithin(root, name, label string) (string, error) {
+	return pathWithin(root, name, label)
 }
 
 func EnsureGitIgnore(path string, entries []string) error {
