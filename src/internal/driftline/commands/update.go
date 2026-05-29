@@ -3,7 +3,9 @@ package commands
 import (
 	"fmt"
 	"io"
+	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/y-writings/driftline/src/internal/driftline"
 )
@@ -21,6 +23,8 @@ func runUpdate(opts driftline.Options, stdout io.Writer) error {
 	}
 	if opts.Ref != "" {
 		lock.Ref = opts.Ref
+	} else if resolved, err := resolveMainRef(opts.SourceDir); err == nil && resolved != "" {
+		lock.Ref = resolved
 	}
 	sourceByID := map[string]driftline.ManifestFile{}
 	for _, item := range manifest.File {
@@ -57,4 +61,13 @@ func runUpdate(opts driftline.Options, stdout io.Writer) error {
 		return err
 	}
 	return nil
+}
+
+func resolveMainRef(dir string) (string, error) {
+	cmd := exec.Command("git", "-C", dir, "rev-parse", "origin/main")
+	out, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
 }

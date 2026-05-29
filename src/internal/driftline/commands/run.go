@@ -35,6 +35,8 @@ func Run(args []string, stdout, stderr io.Writer) error {
 		return runDiff(opts, stdout)
 	case "update":
 		return runUpdate(opts, stdout)
+	case "pull":
+		return runPull(opts, stdout)
 	case "prune":
 		return runPrune(opts, stdout)
 	case "help", "-h", "--help":
@@ -69,6 +71,7 @@ commands:
   check   check whether target files match the source files
   diff    show diffs for files that would be added or updated
   update  copy added/updated files and refresh the lock file
+  pull    copy exported file subsets selected in .driftline.yaml
   prune   remove manifest-deleted files when they are unchanged locally
 
 options:
