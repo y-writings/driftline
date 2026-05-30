@@ -10,25 +10,41 @@ import (
 	"github.com/y-writings/driftline/src/internal/driftline"
 )
 
-func runDiff(opts driftline.Options, stdout io.Writer) error {
-	_, _, changes, err := driftline.BuildPlan(opts)
+func runDiff(source driftline.SourceClient, opts TargetOptions, stdout io.Writer) error {
+	plan, err := driftline.BuildPlan(driftline.PlanOptions{TargetDir: opts.TargetDir, Source: source})
 	if err != nil {
 		return err
 	}
-	for _, change := range sortedChanges(changes) {
-		switch change.Status {
-		case driftline.StatusAdd, driftline.StatusUpdate:
-			if err := printGitDiff(stdout, change.SourcePath, change.TargetPath, change.Status == driftline.StatusAdd); err != nil {
+	for _, change := range sortedChanges(plan.Changes) {
+		switch {
+		case (change.Status == driftline.StatusAdd || change.Status == driftline.StatusUpdate) && change.WritesTarget:
+			if err := printBytesDiff(stdout, change.SourceBytes, change.TargetPath, change.Status == driftline.StatusAdd); err != nil {
 				return err
 			}
-		case driftline.StatusPrune, driftline.StatusConflict:
+		case change.Status != driftline.StatusSynced:
 			fmt.Fprintf(stdout, "%s %s: %s\n", change.Status, change.ID, change.Reason)
 		}
 	}
-	if driftline.HasDrift(changes) {
+	if driftline.HasDrift(plan.Changes) {
 		return errDrift
 	}
 	return nil
+}
+
+func printBytesDiff(w io.Writer, sourceBytes []byte, targetPath string, targetMissing bool) error {
+	temp, err := os.CreateTemp("", "driftline-source-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(temp.Name())
+	if _, err := temp.Write(sourceBytes); err != nil {
+		temp.Close()
+		return err
+	}
+	if err := temp.Close(); err != nil {
+		return err
+	}
+	return printGitDiff(w, temp.Name(), targetPath, targetMissing)
 }
 
 func printGitDiff(w io.Writer, sourcePath, targetPath string, targetMissing bool) error {

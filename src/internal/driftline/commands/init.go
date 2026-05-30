@@ -1,0 +1,75 @@
+package commands
+
+import (
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+
+	"github.com/y-writings/driftline/src/internal/driftline"
+)
+
+func runInit(source driftline.SourceClient, opts InitOptions, stdout io.Writer) error {
+	if opts.TargetDir == "" {
+		opts.TargetDir = "."
+	}
+	if err := driftline.ValidateRepository(opts.Repository); err != nil {
+		return err
+	}
+	info, err := os.Stat(opts.TargetDir)
+	if err != nil {
+		return fmt.Errorf("target directory must exist: %w", err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("target directory must be a directory: %s", opts.TargetDir)
+	}
+	configPath := filepath.Join(opts.TargetDir, driftline.TargetConfigPath)
+	lockPath := filepath.Join(opts.TargetDir, driftline.LockFilePath)
+	if _, err := os.Stat(configPath); err == nil {
+		return fmt.Errorf("target config already exists: %s", driftline.TargetConfigPath)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if _, err := os.Stat(lockPath); err == nil {
+		return fmt.Errorf("lock file already exists: %s", driftline.LockFilePath)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+
+	ref := opts.Ref
+	commit := ""
+	if ref == "" {
+		var err error
+		ref, commit, err = source.ResolveDefaultRef(opts.Repository)
+		if err != nil {
+			return err
+		}
+	} else {
+		if err := driftline.ValidateRef(ref); err != nil {
+			return err
+		}
+		var err error
+		commit, err = source.ResolveRef(opts.Repository, ref)
+		if err != nil {
+			return err
+		}
+	}
+	manifestBytes, err := source.ReadFile(opts.Repository, commit, driftline.TargetConfigPath)
+	if err != nil {
+		return fmt.Errorf("driftline.yaml not found in source repository: %w", err)
+	}
+	manifest, err := driftline.LoadSourceManifestBytes(manifestBytes)
+	if err != nil {
+		return err
+	}
+	config, err := driftline.TargetConfigFromSourceManifest(opts.Repository, ref, manifest)
+	if err != nil {
+		return err
+	}
+	if err := driftline.WriteTargetConfig(configPath, config); err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "created driftline.yaml from %s@%s\n", opts.Repository, commit)
+	return nil
+}

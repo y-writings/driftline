@@ -2,7 +2,6 @@ package commands
 
 import (
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 
@@ -11,7 +10,18 @@ import (
 
 var errDrift = errors.New("drift detected")
 
+type Runner struct {
+	Source driftline.SourceClient
+}
+
 func Run(args []string, stdout, stderr io.Writer) error {
+	return Runner{Source: driftline.NewGitHubClientFromEnv()}.Run(args, stdout, stderr)
+}
+
+func (r Runner) Run(args []string, stdout, stderr io.Writer) error {
+	if r.Source == nil {
+		r.Source = driftline.NewGitHubClientFromEnv()
+	}
 	if len(args) > 0 && args[0] == "--" {
 		args = args[1:]
 	}
@@ -19,66 +29,125 @@ func Run(args []string, stdout, stderr io.Writer) error {
 		printUsage(stderr)
 		return errors.New("command is required")
 	}
-	command := args[0]
-	opts, rest, err := parseOptions(args[1:], stderr)
-	if err != nil {
-		return err
-	}
-	if len(rest) > 0 {
-		return fmt.Errorf("unexpected arguments: %v", rest)
-	}
 
-	switch command {
+	switch args[0] {
+	case "init":
+		opts, err := parseInitOptions(args[1:])
+		if err != nil {
+			return err
+		}
+		return runInit(r.Source, opts, stdout)
 	case "check":
-		return runCheck(opts, stdout)
+		opts, err := parseTargetOptions(args[1:])
+		if err != nil {
+			return err
+		}
+		return runCheck(r.Source, opts, stdout)
 	case "diff":
-		return runDiff(opts, stdout)
+		opts, err := parseTargetOptions(args[1:])
+		if err != nil {
+			return err
+		}
+		return runDiff(r.Source, opts, stdout)
 	case "update":
-		return runUpdate(opts, stdout)
-	case "pull":
-		return runPull(opts, stdout)
+		opts, err := parseTargetOptions(args[1:])
+		if err != nil {
+			return err
+		}
+		return runUpdate(r.Source, opts, stdout)
 	case "prune":
-		return runPrune(opts, stdout)
+		opts, err := parseTargetOptions(args[1:])
+		if err != nil {
+			return err
+		}
+		return runPrune(r.Source, opts, stdout)
 	case "help", "-h", "--help":
 		printUsage(stdout)
 		return nil
 	default:
 		printUsage(stderr)
-		return fmt.Errorf("unknown command %q", command)
+		return fmt.Errorf("unknown command %q", args[0])
 	}
 }
 
-func parseOptions(args []string, stderr io.Writer) (driftline.Options, []string, error) {
-	opts := driftline.DefaultOptions()
-	fs := flag.NewFlagSet("driftline", flag.ContinueOnError)
-	fs.SetOutput(stderr)
-	fs.StringVar(&opts.ManifestPath, "manifest", opts.ManifestPath, "manifest path relative to source dir")
-	fs.StringVar(&opts.LockPath, "lock", opts.LockPath, "lock file path relative to target dir")
-	fs.StringVar(&opts.SourceDir, "source-dir", opts.SourceDir, "source directory")
-	fs.StringVar(&opts.TargetDir, "target-dir", opts.TargetDir, "target repository directory")
-	fs.StringVar(&opts.Repository, "repository", opts.Repository, "repository value written to lock file")
-	fs.StringVar(&opts.Ref, "ref", opts.Ref, "ref value written to lock file")
-	if err := fs.Parse(args); err != nil {
-		return opts, nil, err
+type TargetOptions struct {
+	TargetDir string
+}
+
+type InitOptions struct {
+	Repository string
+	Ref        string
+	TargetDir  string
+}
+
+func parseTargetOptions(args []string) (TargetOptions, error) {
+	opts := TargetOptions{TargetDir: "."}
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--target-dir":
+			if i+1 >= len(args) {
+				return opts, errors.New("--target-dir requires a value")
+			}
+			opts.TargetDir = args[i+1]
+			i++
+		default:
+			return opts, fmt.Errorf("unknown option %q", args[i])
+		}
 	}
-	return opts, fs.Args(), nil
+	return opts, nil
+}
+
+func parseInitOptions(args []string) (InitOptions, error) {
+	opts := InitOptions{TargetDir: "."}
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--ref":
+			if i+1 >= len(args) {
+				return opts, errors.New("--ref requires a value")
+			}
+			opts.Ref = args[i+1]
+			i++
+		case "--target-dir":
+			if i+1 >= len(args) {
+				return opts, errors.New("--target-dir requires a value")
+			}
+			opts.TargetDir = args[i+1]
+			i++
+		default:
+			if len(args[i]) > 0 && args[i][0] == '-' {
+				return opts, fmt.Errorf("unknown option %q", args[i])
+			}
+			if opts.Repository != "" {
+				return opts, fmt.Errorf("unexpected argument %q", args[i])
+			}
+			opts.Repository = args[i]
+		}
+	}
+	if opts.Repository == "" {
+		return opts, errors.New("repository is required")
+	}
+	return opts, nil
 }
 
 func printUsage(w io.Writer) {
 	fmt.Fprintln(w, `usage: driftline <command> [options]
 
 commands:
-  check   check whether target files match the source files
-  diff    show diffs for files that would be added or updated
-  update  copy added/updated files and refresh the lock file
-  pull    copy exported file subsets selected in .driftline.yaml
-  prune   remove manifest-deleted files when they are unchanged locally
+  init owner/repo  create driftline.yaml from a GitHub Source Repository
+  check            check whether target files match the Source Repository
+  diff             show diffs for files that would be added or updated
+  update           copy added/updated files and refresh driftline-lock.yaml
+  prune            remove stale files when they are unchanged locally
+
+examples:
+  driftline init owner/repo
+  driftline init owner/repo --ref main --target-dir .
+  driftline check --target-dir .
 
 options:
-  --source-dir string  source directory (default ".")
   --target-dir string  target repository directory (default ".")
-  --manifest string    manifest path relative to source dir (default "driftline.yaml")
-  --lock string        lock file path relative to target dir (default ".driftline.lock")
-  --repository string  repository value written to lock file
-  --ref string         ref value written to lock file`)
+  --ref string         init-only ref to preserve in driftline.yaml
+
+authentication:
+  set GITHUB_TOKEN for private repositories or higher rate limits`)
 }
