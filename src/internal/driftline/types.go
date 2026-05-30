@@ -1,27 +1,48 @@
 package driftline
 
-type Manifest struct {
-	Version   int            `yaml:"version"`
-	GitIgnore []string       `yaml:"gitignore,omitempty"`
-	File      []ManifestFile `yaml:"files"`
+type SourceManifest struct {
+	Version   int                  `yaml:"version"`
+	GitIgnore []string             `yaml:"gitignore,omitempty"`
+	Files     []SourceManifestFile `yaml:"files"`
 }
 
-type ManifestFile struct {
+type SourceManifestFile struct {
 	ID          string `yaml:"id"`
 	Source      string `yaml:"source"`
 	Target      string `yaml:"target"`
 	IfNotExists bool   `yaml:"if_not_exists,omitempty"`
 }
 
+type TargetConfig struct {
+	Version int                `yaml:"version"`
+	Source  TargetSource       `yaml:"source"`
+	Files   []TargetConfigFile `yaml:"files"`
+}
+
+type TargetSource struct {
+	Repository string `yaml:"repository"`
+	Ref        string `yaml:"ref"`
+}
+
+type TargetConfigFile struct {
+	ID          string `yaml:"id"`
+	Target      string `yaml:"target,omitempty"`
+	IfNotExists *bool  `yaml:"if_not_exists,omitempty"`
+}
+
 type LockFile struct {
-	Repository string              `yaml:"repository,omitempty"`
-	Ref        string              `yaml:"ref,omitempty"`
-	Files      map[string]LockItem `yaml:"files,omitempty"`
+	Version    int        `yaml:"version"`
+	Repository string     `yaml:"repository"`
+	Ref        string     `yaml:"ref"`
+	Commit     string     `yaml:"commit"`
+	Files      []LockItem `yaml:"files"`
 }
 
 type LockItem struct {
+	ID           string `yaml:"id"`
 	Target       string `yaml:"target"`
 	SourceSHA256 string `yaml:"source_sha256"`
+	TargetSHA256 string `yaml:"target_sha256"`
 }
 
 type Status string
@@ -35,12 +56,17 @@ const (
 )
 
 type Change struct {
-	ID          string
-	SourcePath  string
-	TargetPath  string
-	SourceHash  string
-	CurrentHash string
-	LockedHash  string
-	Status      Status
-	Reason      string
+	ID              string
+	Target          string
+	SourcePath      string
+	TargetPath      string
+	SourceBytes     []byte
+	SourceHash      string
+	CurrentHash     string
+	LockedSource    string
+	LockedTarget    string
+	Status          Status
+	Reason          string
+	WritesTarget    bool
+	PreservesTarget bool
 }

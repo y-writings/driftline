@@ -1,29 +1,21 @@
 # driftline
 
-`driftline` は、あるディレクトリの管理対象ファイルを別のリポジトリへ同期し、同期状態をロックファイルで追跡するCLIツールです。
+`driftline` copies files from a GitHub Source Repository into a Target Repository and records the consumed Git commit in `driftline-lock.yaml`.
 
-## インストール
-
-現時点ではソースからビルドして使います。
+## Install
 
 ```sh
 go build ./src/cmd/driftline
 ```
 
-Dockerイメージとしてビルドする場合は次を実行します。
+## Source Manifest
 
-```sh
-docker build -t driftline .
-```
-
-## 設定
-
-同期元ディレクトリに `driftline.yaml` を置きます。
+The Source Repository owns `driftline.yaml` at its repository root.
 
 ```yaml
 version: 1
 gitignore:
-  - .driftline.lock
+  - .cache/tool
 files:
   - id: example
     source: templates/example.txt
@@ -34,49 +26,59 @@ files:
     if_not_exists: true
 ```
 
-主な項目は次のとおりです。
+## Target Config
 
-- `version`: 現在は `1` のみ対応
-- `gitignore`: `update` 時に同期先の `.gitignore` へ追記する項目
-- `files`: 同期するファイル一覧
-- `id`: ファイルを識別する一意なID
-- `source`: 同期元ディレクトリからの相対パス
-- `target`: 同期先ディレクトリからの相対パス
-- `if_not_exists`: `true` の場合、同期先にファイルがあると上書きしない
-
-`update` を実行すると、同期先に `.driftline.lock` が作成または更新されます。
-
-## 使い方
-
-基本形は次のとおりです。
+Create a Target Config from a GitHub repository:
 
 ```sh
-driftline <command> [options]
+driftline init y-writings/source-repo
 ```
 
-よく使う例です。
+This creates `driftline.yaml` in the Target Repository.
+
+```yaml
+version: 1
+source:
+  repository: y-writings/source-repo
+  ref: main
+files:
+  - id: example
+    target: example.txt
+```
+
+Use `--ref` with `init` to pin the configured branch, tag, or commit-ish by name:
 
 ```sh
-driftline check --source-dir ../templates --target-dir .
-driftline diff --source-dir ../templates --target-dir .
-driftline update --source-dir ../templates --target-dir .
-driftline prune --source-dir ../templates --target-dir .
+driftline init y-writings/source-repo --ref main
 ```
 
-コマンドは次のとおりです。
+## Commands
 
-- `check`: 同期先が同期元と一致しているか確認する
-- `diff`: 追加または更新されるファイルの差分を表示する
-- `update`: 追加または更新が必要なファイルをコピーし、ロックファイルを更新する
-- `prune`: マニフェストから削除済みで、同期先にローカル変更がないファイルを削除する
+```sh
+driftline check
+driftline diff
+driftline update
+driftline prune
+```
 
-主なオプションは次のとおりです。
+Use `--target-dir` to operate on another Target Repository path.
 
-- `--source-dir`: 同期元ディレクトリ。既定値は `.`
-- `--target-dir`: 同期先ディレクトリ。既定値は `.`
-- `--manifest`: マニフェストの相対パス。既定値は `driftline.yaml`
-- `--lock`: ロックファイルの相対パス。既定値は `.driftline.lock`
-- `--repository`: ロックファイルに書き込むリポジトリ名
-- `--ref`: ロックファイルに書き込む参照名
+## Lock File
 
-パスは各ディレクトリからの相対パスで指定します。絶対パスや `..` でルート外へ出るパスは使えません。
+`driftline update` writes `driftline-lock.yaml` with the resolved Git commit and file hashes.
+
+```yaml
+version: 1
+repository: y-writings/source-repo
+ref: main
+commit: 0123456789abcdef0123456789abcdef01234567
+files:
+  - id: example
+    target: example.txt
+    source_sha256: ...
+    target_sha256: ...
+```
+
+## GitHub Authentication
+
+Public repositories work without configuration. Set `GITHUB_TOKEN` for private repositories or higher rate limits.

@@ -7,13 +7,13 @@ import (
 	"github.com/y-writings/driftline/src/internal/driftline"
 )
 
-func runCheck(opts driftline.Options, stdout io.Writer) error {
-	_, _, changes, err := driftline.BuildPlan(opts)
+func runCheck(source driftline.SourceClient, opts TargetOptions, stdout io.Writer) error {
+	plan, err := driftline.BuildPlan(driftline.PlanOptions{TargetDir: opts.TargetDir, Source: source})
 	if err != nil {
 		return err
 	}
-	printChanges(stdout, changes)
-	if driftline.HasDrift(changes) {
+	printChanges(stdout, plan.Changes)
+	if driftline.HasDrift(plan.Changes) {
 		return errDrift
 	}
 	return nil
