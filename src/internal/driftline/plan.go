@@ -92,7 +92,7 @@ func (b planBuilder) build() (Plan, error) {
 	activeTargets := map[string]struct{}{}
 	lockByIdentity := map[string]LockItem{}
 	for _, item := range b.lock.Files {
-		lockByIdentity[lockIdentity(item.ID, item.Target)] = item
+		lockByIdentity[lockIdentity(item.ID, normalizedTargetPath(item.Target))] = item
 	}
 
 	plan := Plan{
@@ -158,7 +158,7 @@ func (b planBuilder) build() (Plan, error) {
 	}
 
 	for _, item := range b.lock.Files {
-		if _, ok := activeTargets[item.Target]; ok {
+		if _, ok := activeTargets[normalizedTargetPath(item.Target)]; ok {
 			continue
 		}
 		plan.NextLock.Files = append(plan.NextLock.Files, item)
@@ -181,6 +181,7 @@ func resolveTargetConfigFile(configured TargetConfigFile, manifestItem SourceMan
 	if configured.IfNotExists != nil {
 		ifNotExists = *configured.IfNotExists
 	}
+	target = normalizedTargetPath(target)
 	return resolvedFile{id: configured.ID, source: manifestItem.Source, target: target, ifNotExists: ifNotExists}
 }
 
@@ -263,8 +264,12 @@ func lockIdentity(id string, target string) string {
 }
 
 func isReservedTargetPath(target string) bool {
-	target = filepath.Clean(target)
+	target = normalizedTargetPath(target)
 	return target == TargetConfigPath || target == LockFilePath
+}
+
+func normalizedTargetPath(target string) string {
+	return filepath.ToSlash(filepath.Clean(target))
 }
 
 func HasDrift(changes []Change) bool {

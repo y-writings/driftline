@@ -128,6 +128,50 @@ func TestBuildPlanRejectsResolvedDuplicateTargets(t *testing.T) {
 	}
 }
 
+func TestBuildPlanRejectsNormalizedDuplicateTargets(t *testing.T) {
+	targetDir := t.TempDir()
+	writePlanFile(t, targetDir, "driftline.yaml", "version: 1\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: first\n    target: foo.txt\n  - id: second\n    target: ./foo.txt\n")
+	client := fakeSourceClient{
+		refs: map[string]string{"y-writings/source-repo@main": "0123456789abcdef0123456789abcdef01234567"},
+		files: map[string][]byte{
+			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:driftline.yaml": []byte("version: 1\nfiles:\n  - id: first\n    source: first.txt\n    target: first.txt\n  - id: second\n    source: second.txt\n    target: second.txt\n"),
+			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:first.txt":      []byte("first\n"),
+			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:second.txt":     []byte("second\n"),
+		},
+	}
+	_, err := BuildPlan(PlanOptions{TargetDir: targetDir, Source: client})
+	if err == nil || !strings.Contains(err.Error(), "duplicate target") {
+		t.Fatalf("expected normalized duplicate target error, got %v", err)
+	}
+}
+
+func TestBuildPlanTreatsNormalizedLockTargetAsActive(t *testing.T) {
+	targetDir := t.TempDir()
+	writePlanFile(t, targetDir, "driftline.yaml", "version: 1\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: sample\n    target: ./foo.txt\n")
+	writePlanFile(t, targetDir, "foo.txt", "hello\n")
+	hash := HashBytes([]byte("hello\n"))
+	writePlanFile(t, targetDir, "driftline-lock.yaml", "version: 1\nrepository: y-writings/source-repo\nref: main\ncommit: 0123456789abcdef0123456789abcdef01234567\nfiles:\n  - id: sample\n    target: foo.txt\n    source_sha256: "+hash+"\n    target_sha256: "+hash+"\n")
+	client := fakeSourceClient{
+		refs: map[string]string{"y-writings/source-repo@main": "0123456789abcdef0123456789abcdef01234567"},
+		files: map[string][]byte{
+			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:driftline.yaml": []byte("version: 1\nfiles:\n  - id: sample\n    source: sample.txt\n    target: ignored.txt\n"),
+			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:sample.txt":     []byte("hello\n"),
+		},
+	}
+	plan, err := BuildPlan(PlanOptions{TargetDir: targetDir, Source: client})
+	if err != nil {
+		t.Fatalf("build plan failed: %v", err)
+	}
+	for _, change := range plan.Changes {
+		if change.Status == StatusPrune || change.Status == StatusConflict {
+			t.Fatalf("normalized active target should not be stale: %#v", plan.Changes)
+		}
+	}
+	if item := plan.NextLockItem("sample", "foo.txt"); item.Target != "foo.txt" {
+		t.Fatalf("expected normalized active lock target, got %#v", item)
+	}
+}
+
 func TestBuildPlanRejectsReservedTargetPaths(t *testing.T) {
 	for name, tc := range map[string]struct {
 		targetConfig string
