@@ -100,6 +100,32 @@ func TestInitRefusesExistingConfigOrLock(t *testing.T) {
 	}
 }
 
+func TestParseOptionsAcceptsStandardFlagForms(t *testing.T) {
+	for name, args := range map[string][]string{
+		"double dash equals": {"--target-dir=/tmp/target"},
+		"single dash space":  {"-target-dir", "/tmp/target"},
+		"single dash equals": {"-target-dir=/tmp/target"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			opts, err := parseTargetOptions(args)
+			if err != nil {
+				t.Fatalf("parse target options failed: %v", err)
+			}
+			if opts.TargetDir != "/tmp/target" {
+				t.Fatalf("unexpected target dir: %q", opts.TargetDir)
+			}
+		})
+	}
+
+	initOpts, err := parseInitOptions([]string{"y-writings/source-repo", "--ref=feature/foo", "-target-dir=/tmp/target"})
+	if err != nil {
+		t.Fatalf("parse init options failed: %v", err)
+	}
+	if initOpts.Repository != "y-writings/source-repo" || initOpts.Ref != "feature/foo" || initOpts.TargetDir != "/tmp/target" {
+		t.Fatalf("unexpected init options: %#v", initOpts)
+	}
+}
+
 func TestHelpShowsNewCommandsAndGitHubToken(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	runner := Runner{Source: commandFakeSourceClient{}}

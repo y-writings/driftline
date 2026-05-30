@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/y-writings/driftline/src/internal/driftline"
 )
@@ -83,16 +84,13 @@ type InitOptions struct {
 func parseTargetOptions(args []string) (TargetOptions, error) {
 	opts := TargetOptions{TargetDir: "."}
 	for i := 0; i < len(args); i++ {
-		switch args[i] {
-		case "--target-dir":
-			if i+1 >= len(args) {
-				return opts, errors.New("--target-dir requires a value")
-			}
-			opts.TargetDir = args[i+1]
-			i++
-		default:
-			return opts, fmt.Errorf("unknown option %q", args[i])
+		if value, ok, err := parseStringOption(args, &i, "target-dir"); err != nil {
+			return opts, err
+		} else if ok {
+			opts.TargetDir = value
+			continue
 		}
+		return opts, fmt.Errorf("unknown option %q", args[i])
 	}
 	return opts, nil
 }
@@ -100,33 +98,47 @@ func parseTargetOptions(args []string) (TargetOptions, error) {
 func parseInitOptions(args []string) (InitOptions, error) {
 	opts := InitOptions{TargetDir: "."}
 	for i := 0; i < len(args); i++ {
-		switch args[i] {
-		case "--ref":
-			if i+1 >= len(args) {
-				return opts, errors.New("--ref requires a value")
-			}
-			opts.Ref = args[i+1]
-			i++
-		case "--target-dir":
-			if i+1 >= len(args) {
-				return opts, errors.New("--target-dir requires a value")
-			}
-			opts.TargetDir = args[i+1]
-			i++
-		default:
-			if len(args[i]) > 0 && args[i][0] == '-' {
-				return opts, fmt.Errorf("unknown option %q", args[i])
-			}
-			if opts.Repository != "" {
-				return opts, fmt.Errorf("unexpected argument %q", args[i])
-			}
-			opts.Repository = args[i]
+		if value, ok, err := parseStringOption(args, &i, "ref"); err != nil {
+			return opts, err
+		} else if ok {
+			opts.Ref = value
+			continue
 		}
+		if value, ok, err := parseStringOption(args, &i, "target-dir"); err != nil {
+			return opts, err
+		} else if ok {
+			opts.TargetDir = value
+			continue
+		}
+		if len(args[i]) > 0 && args[i][0] == '-' {
+			return opts, fmt.Errorf("unknown option %q", args[i])
+		}
+		if opts.Repository != "" {
+			return opts, fmt.Errorf("unexpected argument %q", args[i])
+		}
+		opts.Repository = args[i]
 	}
 	if opts.Repository == "" {
 		return opts, errors.New("repository is required")
 	}
 	return opts, nil
+}
+
+func parseStringOption(args []string, index *int, name string) (string, bool, error) {
+	arg := args[*index]
+	for _, prefix := range []string{"--" + name, "-" + name} {
+		if arg == prefix {
+			if *index+1 >= len(args) {
+				return "", true, fmt.Errorf("%s requires a value", prefix)
+			}
+			*index = *index + 1
+			return args[*index], true, nil
+		}
+		if value, ok := strings.CutPrefix(arg, prefix+"="); ok {
+			return value, true, nil
+		}
+	}
+	return "", false, nil
 }
 
 func printUsage(w io.Writer) {
