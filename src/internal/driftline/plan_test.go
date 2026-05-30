@@ -128,6 +128,38 @@ func TestBuildPlanRejectsResolvedDuplicateTargets(t *testing.T) {
 	}
 }
 
+func TestBuildPlanRejectsReservedTargetPaths(t *testing.T) {
+	for name, tc := range map[string]struct {
+		targetConfig string
+		manifest     string
+	}{
+		"source manifest target config": {
+			targetConfig: "version: 1\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: sample\n",
+			manifest:     "version: 1\nfiles:\n  - id: sample\n    source: sample.txt\n    target: driftline.yaml\n",
+		},
+		"target config override lock": {
+			targetConfig: "version: 1\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: sample\n    target: driftline-lock.yaml\n",
+			manifest:     "version: 1\nfiles:\n  - id: sample\n    source: sample.txt\n    target: sample.txt\n",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			targetDir := t.TempDir()
+			writePlanFile(t, targetDir, "driftline.yaml", tc.targetConfig)
+			client := fakeSourceClient{
+				refs: map[string]string{"y-writings/source-repo@main": "0123456789abcdef0123456789abcdef01234567"},
+				files: map[string][]byte{
+					"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:driftline.yaml": []byte(tc.manifest),
+					"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:sample.txt":     []byte("hello\n"),
+				},
+			}
+			_, err := BuildPlan(PlanOptions{TargetDir: targetDir, Source: client})
+			if err == nil || !strings.Contains(err.Error(), "reserved target path") {
+				t.Fatalf("expected reserved target path error, got %v", err)
+			}
+		})
+	}
+}
+
 func TestBuildPlanDropsStaleLockEntryWhenTargetIsActiveAgain(t *testing.T) {
 	targetDir := t.TempDir()
 	writePlanFile(t, targetDir, "driftline.yaml", "version: 1\nsource:\n  repository: y-writings/new-source\n  ref: main\nfiles:\n  - id: sample\n    target: same.txt\n")

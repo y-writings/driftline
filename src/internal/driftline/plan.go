@@ -126,6 +126,9 @@ func (b planBuilder) build() (Plan, error) {
 			return Plan{}, fmt.Errorf("unknown source file id %q", configured.ID)
 		}
 		resolved := resolveTargetConfigFile(configured, manifestItem)
+		if isReservedTargetPath(resolved.target) {
+			return Plan{}, fmt.Errorf("reserved target path %q", resolved.target)
+		}
 		if _, ok := activeTargets[resolved.target]; ok {
 			return Plan{}, fmt.Errorf("duplicate target %q", resolved.target)
 		}
@@ -257,6 +260,10 @@ func (b planBuilder) staleChange(item LockItem) (Change, error) {
 
 func lockIdentity(id string, target string) string {
 	return id + "\x00" + target
+}
+
+func isReservedTargetPath(target string) bool {
+	return target == TargetConfigPath || target == LockFilePath
 }
 
 func HasDrift(changes []Change) bool {
