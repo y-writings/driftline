@@ -141,6 +141,14 @@ func TestBuildPlanRejectsReservedTargetPaths(t *testing.T) {
 			targetConfig: "version: 1\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: sample\n    target: driftline-lock.yaml\n",
 			manifest:     "version: 1\nfiles:\n  - id: sample\n    source: sample.txt\n    target: sample.txt\n",
 		},
+		"normalized source manifest target config": {
+			targetConfig: "version: 1\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: sample\n",
+			manifest:     "version: 1\nfiles:\n  - id: sample\n    source: sample.txt\n    target: ./driftline.yaml\n",
+		},
+		"normalized target config override lock": {
+			targetConfig: "version: 1\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: sample\n    target: ./driftline-lock.yaml\n",
+			manifest:     "version: 1\nfiles:\n  - id: sample\n    source: sample.txt\n    target: sample.txt\n",
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			targetDir := t.TempDir()

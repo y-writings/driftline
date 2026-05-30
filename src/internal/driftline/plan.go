@@ -263,6 +263,7 @@ func lockIdentity(id string, target string) string {
 }
 
 func isReservedTargetPath(target string) bool {
+	target = filepath.Clean(target)
 	return target == TargetConfigPath || target == LockFilePath
 }
 
