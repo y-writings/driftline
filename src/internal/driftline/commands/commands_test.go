@@ -43,7 +43,7 @@ func TestInitCreatesTargetConfigFromSourceManifest(t *testing.T) {
 		defaultRef:    "main",
 		defaultCommit: "0123456789abcdef0123456789abcdef01234567",
 		files: map[string][]byte{
-			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:driftline.yaml": []byte("version: 1\ngitignore:\n  - .cache/tool\nfiles:\n  - id: example\n    source: templates/example.txt\n    target: example.txt\n  - id: local-config\n    source: templates/config.local\n    target: config.local\n    if_not_exists: true\n"),
+			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:driftline.yaml": []byte("version: 1\ngitignore:\n  - .cache/tool\nfiles:\n  - id: example\n    source: templates/example.txt\n  - id: local-config\n    source: templates/config.local\n    if_not_exists: true\n"),
 		},
 	}
 
@@ -55,10 +55,13 @@ func TestInitCreatesTargetConfigFromSourceManifest(t *testing.T) {
 	}
 
 	got := readFile(t, targetDir, "driftline.yaml")
-	for _, want := range []string{"version: 1", "repository: y-writings/source-repo", "ref: main", "id: example", "target: example.txt", "id: local-config", "if_not_exists: true"} {
+	for _, want := range []string{"version: 1", "repository: y-writings/source-repo", "ref: main", "id: example", "id: local-config", "if_not_exists: true"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("generated config missing %q:\n%s", want, got)
 		}
+	}
+	if strings.Contains(got, "target:") {
+		t.Fatalf("target config must not copy source manifest paths as targets:\n%s", got)
 	}
 	if strings.Contains(got, "gitignore") {
 		t.Fatalf("target config must not copy gitignore:\n%s", got)
@@ -150,7 +153,7 @@ func TestCheckReportsMissingLockAndUpdateCreatesIt(t *testing.T) {
 	client := commandFakeSourceClient{
 		refs: map[string]string{"y-writings/source-repo@main": "0123456789abcdef0123456789abcdef01234567"},
 		files: map[string][]byte{
-			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:driftline.yaml": []byte("version: 1\ngitignore:\n  - .cache/tool\nfiles:\n  - id: sample\n    source: sample.txt\n    target: sample.txt\n"),
+			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:driftline.yaml": []byte("version: 1\ngitignore:\n  - .cache/tool\nfiles:\n  - id: sample\n    source: sample.txt\n"),
 			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:sample.txt":     []byte("hello\n"),
 		},
 	}
@@ -191,7 +194,7 @@ func TestUpdatePreservesIfNotExistsLocalEdits(t *testing.T) {
 	client := commandFakeSourceClient{
 		refs: map[string]string{"y-writings/source-repo@main": "0123456789abcdef0123456789abcdef01234567"},
 		files: map[string][]byte{
-			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:driftline.yaml": []byte("version: 1\nfiles:\n  - id: local-config\n    source: config.local\n    target: config.local\n    if_not_exists: true\n"),
+			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:driftline.yaml": []byte("version: 1\nfiles:\n  - id: local-config\n    source: config.local\n    if_not_exists: true\n"),
 			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:config.local":   []byte("from-source\n"),
 		},
 	}
@@ -244,7 +247,7 @@ func TestPruneDoesNotAdvanceActiveLockEntries(t *testing.T) {
 	client := commandFakeSourceClient{
 		refs: map[string]string{"y-writings/source-repo@main": newCommit},
 		files: map[string][]byte{
-			"y-writings/source-repo@" + newCommit + ":driftline.yaml": []byte("version: 1\nfiles:\n  - id: sample\n    source: sample.txt\n    target: sample.txt\n"),
+			"y-writings/source-repo@" + newCommit + ":driftline.yaml": []byte("version: 1\nfiles:\n  - id: sample\n    source: sample.txt\n"),
 			"y-writings/source-repo@" + newCommit + ":sample.txt":     []byte("new\n"),
 		},
 	}

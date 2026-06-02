@@ -175,7 +175,7 @@ func (b planBuilder) build() (Plan, error) {
 func resolveTargetConfigFile(configured TargetConfigFile, manifestItem SourceManifestFile) resolvedFile {
 	target := configured.Target
 	if target == "" {
-		target = manifestItem.Target
+		target = manifestItem.Source
 	}
 	ifNotExists := manifestItem.IfNotExists
 	if configured.IfNotExists != nil {

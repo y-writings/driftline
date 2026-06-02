@@ -9,7 +9,6 @@ type SourceManifest struct {
 type SourceManifestFile struct {
 	ID          string `yaml:"id"`
 	Source      string `yaml:"source"`
-	Target      string `yaml:"target"`
 	IfNotExists bool   `yaml:"if_not_exists,omitempty"`
 }
 

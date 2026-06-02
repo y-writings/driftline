@@ -6,7 +6,7 @@ import (
 )
 
 func TestLoadSourceManifestStrictValidation(t *testing.T) {
-	manifest, err := LoadSourceManifestBytes([]byte("version: 1\ngitignore:\n  - ' .cache/tool '\n  - ''\nfiles:\n  - id: example\n    source: templates/example.txt\n    target: example.txt\n  - id: local-config\n    source: templates/config.local\n    target: config.local\n    if_not_exists: true\n"))
+	manifest, err := LoadSourceManifestBytes([]byte("version: 1\ngitignore:\n  - ' .cache/tool '\n  - ''\nfiles:\n  - id: example\n    source: templates/example.txt\n  - id: local-config\n    source: templates/config.local\n    if_not_exists: true\n"))
 	if err != nil {
 		t.Fatalf("load source manifest failed: %v", err)
 	}
@@ -25,7 +25,8 @@ func TestLoadSourceManifestRejectsUnknownAndDuplicateKeys(t *testing.T) {
 	for name, input := range map[string]string{
 		"unknown root":   "version: 1\nextra: true\nfiles: []\n",
 		"duplicate root": "version: 1\nversion: 1\nfiles: []\n",
-		"unknown file":   "version: 1\nfiles:\n  - id: sample\n    source: sample.txt\n    target: sample.txt\n    extra: true\n",
+		"unknown file":   "version: 1\nfiles:\n  - id: sample\n    source: sample.txt\n    extra: true\n",
+		"target file":    "version: 1\nfiles:\n  - id: sample\n    source: sample.txt\n    target: sample.txt\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := LoadSourceManifestBytes([]byte(input))
@@ -46,6 +47,18 @@ func TestLoadTargetConfigDistinguishesOmittedAndExplicitFalse(t *testing.T) {
 	}
 	if config.Files[1].IfNotExists == nil || *config.Files[1].IfNotExists {
 		t.Fatalf("expected explicit false override, got %#v", config.Files[1].IfNotExists)
+	}
+}
+
+func TestTargetConfigFromSourceManifestRejectsDuplicateDefaultTargets(t *testing.T) {
+	manifest, err := LoadSourceManifestBytes([]byte("version: 1\nfiles:\n  - id: first\n    source: same.txt\n  - id: second\n    source: ./same.txt\n"))
+	if err != nil {
+		t.Fatalf("load source manifest failed: %v", err)
+	}
+
+	_, err = TargetConfigFromSourceManifest("y-writings/source-repo", "main", manifest)
+	if err == nil || !strings.Contains(err.Error(), "duplicate target") {
+		t.Fatalf("expected duplicate default target error, got %v", err)
 	}
 }
 

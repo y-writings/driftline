@@ -41,7 +41,7 @@ func TestBuildPlanDetectsMissingLockAndAdd(t *testing.T) {
 	client := fakeSourceClient{
 		refs: map[string]string{"y-writings/source-repo@main": "0123456789abcdef0123456789abcdef01234567"},
 		files: map[string][]byte{
-			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:driftline.yaml": []byte("version: 1\nfiles:\n  - id: sample\n    source: sample.txt\n    target: config/sample.txt\n"),
+			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:driftline.yaml": []byte("version: 1\nfiles:\n  - id: sample\n    source: sample.txt\n"),
 			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:sample.txt":     []byte("hello\n"),
 		},
 	}
@@ -50,20 +50,23 @@ func TestBuildPlanDetectsMissingLockAndAdd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build plan failed: %v", err)
 	}
+	if item := plan.NextLockItem("sample", "sample.txt"); item.Target != "sample.txt" {
+		t.Fatalf("expected omitted target config to default to source path, got %#v", item)
+	}
 	assertPlanHasChange(t, plan, StatusUpdate, "lock", "lock file is missing")
 	assertPlanHasChange(t, plan, StatusAdd, "sample", "target file is missing")
 }
 
 func TestBuildPlanPreservesIfNotExistsTargetHashAcrossUpdates(t *testing.T) {
 	targetDir := t.TempDir()
-	writePlanFile(t, targetDir, "driftline.yaml", "version: 1\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: local-config\n")
+	writePlanFile(t, targetDir, "driftline.yaml", "version: 1\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: local-config\n    target: config.local\n")
 	writePlanFile(t, targetDir, "config.local", "edited-local\n")
 	writePlanFile(t, targetDir, "driftline-lock.yaml", "version: 1\nrepository: y-writings/source-repo\nref: main\ncommit: oldoldoldoldoldoldoldoldoldoldoldoldoldoldoldold\nfiles:\n  - id: local-config\n    target: config.local\n    source_sha256: old-source\n    target_sha256: locked-target\n")
 
 	client := fakeSourceClient{
 		refs: map[string]string{"y-writings/source-repo@main": "0123456789abcdef0123456789abcdef01234567"},
 		files: map[string][]byte{
-			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:driftline.yaml":         []byte("version: 1\nfiles:\n  - id: local-config\n    source: templates/config.local\n    target: config.local\n    if_not_exists: true\n"),
+			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:driftline.yaml":         []byte("version: 1\nfiles:\n  - id: local-config\n    source: templates/config.local\n    if_not_exists: true\n"),
 			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:templates/config.local": []byte("from-source\n"),
 		},
 	}
@@ -79,7 +82,7 @@ func TestBuildPlanPreservesIfNotExistsTargetHashAcrossUpdates(t *testing.T) {
 	assertPlanHasChange(t, plan, StatusUpdate, "local-config", "target preserved because if_not_exists is enabled")
 }
 
-func TestBuildPlanLeavesOldTargetAsPruneCandidateWhenDefaultTargetChanges(t *testing.T) {
+func TestBuildPlanLeavesOldTargetAsPruneCandidateWhenDefaultSourcePathChanges(t *testing.T) {
 	targetDir := t.TempDir()
 	writePlanFile(t, targetDir, "driftline.yaml", "version: 1\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: sample\n")
 	writePlanFile(t, targetDir, "old.txt", "old\n")
@@ -89,8 +92,8 @@ func TestBuildPlanLeavesOldTargetAsPruneCandidateWhenDefaultTargetChanges(t *tes
 	client := fakeSourceClient{
 		refs: map[string]string{"y-writings/source-repo@main": "0123456789abcdef0123456789abcdef01234567"},
 		files: map[string][]byte{
-			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:driftline.yaml": []byte("version: 1\nfiles:\n  - id: sample\n    source: sample.txt\n    target: new.txt\n"),
-			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:sample.txt":     []byte("new\n"),
+			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:driftline.yaml": []byte("version: 1\nfiles:\n  - id: sample\n    source: new.txt\n"),
+			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:new.txt":        []byte("new\n"),
 		},
 	}
 
@@ -117,10 +120,10 @@ func TestBuildPlanRejectsUnknownSourceID(t *testing.T) {
 
 func TestBuildPlanRejectsResolvedDuplicateTargets(t *testing.T) {
 	targetDir := t.TempDir()
-	writePlanFile(t, targetDir, "driftline.yaml", "version: 1\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: first\n  - id: second\n")
+	writePlanFile(t, targetDir, "driftline.yaml", "version: 1\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: first\n    target: same.txt\n  - id: second\n    target: same.txt\n")
 	client := fakeSourceClient{
 		refs:  map[string]string{"y-writings/source-repo@main": "0123456789abcdef0123456789abcdef01234567"},
-		files: map[string][]byte{"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:driftline.yaml": []byte("version: 1\nfiles:\n  - id: first\n    source: first.txt\n    target: same.txt\n  - id: second\n    source: second.txt\n    target: same.txt\n")},
+		files: map[string][]byte{"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:driftline.yaml": []byte("version: 1\nfiles:\n  - id: first\n    source: first.txt\n  - id: second\n    source: second.txt\n")},
 	}
 	_, err := BuildPlan(PlanOptions{TargetDir: targetDir, Source: client})
 	if err == nil || !strings.Contains(err.Error(), "duplicate target") {
@@ -134,7 +137,7 @@ func TestBuildPlanRejectsNormalizedDuplicateTargets(t *testing.T) {
 	client := fakeSourceClient{
 		refs: map[string]string{"y-writings/source-repo@main": "0123456789abcdef0123456789abcdef01234567"},
 		files: map[string][]byte{
-			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:driftline.yaml": []byte("version: 1\nfiles:\n  - id: first\n    source: first.txt\n    target: first.txt\n  - id: second\n    source: second.txt\n    target: second.txt\n"),
+			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:driftline.yaml": []byte("version: 1\nfiles:\n  - id: first\n    source: first.txt\n  - id: second\n    source: second.txt\n"),
 			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:first.txt":      []byte("first\n"),
 			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:second.txt":     []byte("second\n"),
 		},
@@ -154,7 +157,7 @@ func TestBuildPlanTreatsNormalizedLockTargetAsActive(t *testing.T) {
 	client := fakeSourceClient{
 		refs: map[string]string{"y-writings/source-repo@main": "0123456789abcdef0123456789abcdef01234567"},
 		files: map[string][]byte{
-			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:driftline.yaml": []byte("version: 1\nfiles:\n  - id: sample\n    source: sample.txt\n    target: ignored.txt\n"),
+			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:driftline.yaml": []byte("version: 1\nfiles:\n  - id: sample\n    source: sample.txt\n"),
 			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:sample.txt":     []byte("hello\n"),
 		},
 	}
@@ -177,21 +180,21 @@ func TestBuildPlanRejectsReservedTargetPaths(t *testing.T) {
 		targetConfig string
 		manifest     string
 	}{
-		"source manifest target config": {
+		"source path default target config": {
 			targetConfig: "version: 1\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: sample\n",
-			manifest:     "version: 1\nfiles:\n  - id: sample\n    source: sample.txt\n    target: driftline.yaml\n",
+			manifest:     "version: 1\nfiles:\n  - id: sample\n    source: driftline.yaml\n",
 		},
 		"target config override lock": {
 			targetConfig: "version: 1\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: sample\n    target: driftline-lock.yaml\n",
-			manifest:     "version: 1\nfiles:\n  - id: sample\n    source: sample.txt\n    target: sample.txt\n",
+			manifest:     "version: 1\nfiles:\n  - id: sample\n    source: sample.txt\n",
 		},
-		"normalized source manifest target config": {
+		"normalized source path default target config": {
 			targetConfig: "version: 1\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: sample\n",
-			manifest:     "version: 1\nfiles:\n  - id: sample\n    source: sample.txt\n    target: ./driftline.yaml\n",
+			manifest:     "version: 1\nfiles:\n  - id: sample\n    source: ./driftline.yaml\n",
 		},
 		"normalized target config override lock": {
 			targetConfig: "version: 1\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: sample\n    target: ./driftline-lock.yaml\n",
-			manifest:     "version: 1\nfiles:\n  - id: sample\n    source: sample.txt\n    target: sample.txt\n",
+			manifest:     "version: 1\nfiles:\n  - id: sample\n    source: sample.txt\n",
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -221,7 +224,7 @@ func TestBuildPlanDropsStaleLockEntryWhenTargetIsActiveAgain(t *testing.T) {
 	client := fakeSourceClient{
 		refs: map[string]string{"y-writings/new-source@main": "0123456789abcdef0123456789abcdef01234567"},
 		files: map[string][]byte{
-			"y-writings/new-source@0123456789abcdef0123456789abcdef01234567:driftline.yaml": []byte("version: 1\nfiles:\n  - id: sample\n    source: sample.txt\n    target: same.txt\n"),
+			"y-writings/new-source@0123456789abcdef0123456789abcdef01234567:driftline.yaml": []byte("version: 1\nfiles:\n  - id: sample\n    source: sample.txt\n"),
 			"y-writings/new-source@0123456789abcdef0123456789abcdef01234567:sample.txt":     []byte("new\n"),
 		},
 	}

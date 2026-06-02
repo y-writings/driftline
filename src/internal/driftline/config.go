@@ -70,13 +70,14 @@ func TargetConfigFromSourceManifest(repository string, ref string, manifest Sour
 		},
 		Files: make([]TargetConfigFile, 0, len(manifest.Files)),
 	}
-	seenTargets := map[string]struct{}{}
+	seenDefaultTargets := map[string]struct{}{}
 	for _, item := range manifest.Files {
-		if _, ok := seenTargets[item.Target]; ok {
-			return TargetConfig{}, fmt.Errorf("duplicate target %q", item.Target)
+		defaultTarget := normalizedTargetPath(item.Source)
+		if _, ok := seenDefaultTargets[defaultTarget]; ok {
+			return TargetConfig{}, fmt.Errorf("duplicate target %q", defaultTarget)
 		}
-		seenTargets[item.Target] = struct{}{}
-		file := TargetConfigFile{ID: item.ID, Target: item.Target}
+		seenDefaultTargets[defaultTarget] = struct{}{}
+		file := TargetConfigFile{ID: item.ID}
 		if item.IfNotExists {
 			v := true
 			file.IfNotExists = &v
@@ -124,7 +125,7 @@ func WriteLock(path string, lock LockFile) error {
 func allowedSourceManifestKeys() map[string]map[string]struct{} {
 	return map[string]map[string]struct{}{
 		"":      set("version", "gitignore", "files"),
-		"files": set("id", "source", "target", "if_not_exists"),
+		"files": set("id", "source", "if_not_exists"),
 	}
 }
 
@@ -252,9 +253,6 @@ func validateSourceManifest(manifest SourceManifest, root *yaml.Node) error {
 		}
 		seen[item.ID] = struct{}{}
 		if err := ValidateConfigPath(item.Source, fmt.Sprintf("source %q", item.ID)); err != nil {
-			return err
-		}
-		if err := ValidateConfigPath(item.Target, fmt.Sprintf("target %q", item.ID)); err != nil {
 			return err
 		}
 	}
