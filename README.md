@@ -19,10 +19,8 @@ gitignore:
 files:
   - id: example
     source: templates/example.txt
-    target: example.txt
   - id: local-config
     source: templates/config.local
-    target: config.local
     if_not_exists: true
 ```
 
@@ -41,6 +39,15 @@ version: 1
 source:
   repository: y-writings/source-repo
   ref: main
+files:
+  - id: example
+  - id: local-config
+    if_not_exists: true
+```
+
+When a Target Config file entry omits `target`, driftline writes to the same relative path as the Source Manifest `source` path. Add `target` only when the Target Repository wants a different destination path:
+
+```yaml
 files:
   - id: example
     target: example.txt
