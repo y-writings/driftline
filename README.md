@@ -11,8 +11,10 @@ go build ./src/cmd/driftline
 ## Source Manifest
 
 The Source Repository owns `driftline.yaml` at its repository root.
+Editors that support JSON Schema can validate it with the canonical schema.
 
 ```yaml
+# yaml-language-server: $schema=https://raw.githubusercontent.com/y-writings/driftline/main/schema.json
 version: 1
 gitignore:
   - .cache/tool
@@ -23,6 +25,8 @@ files:
     source: templates/config.local
     if_not_exists: true
 ```
+
+Source Manifest file entries do not define `target`; target paths belong to the Target Config.
 
 ## Target Config
 

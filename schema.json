@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/y-writings/driftline/main/schema.json",
+  "title": "driftline Source Manifest",
+  "description": "Schema for driftline.yaml in a Source Repository. Target paths are configured by Target Repositories, not in this manifest.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "files"],
+  "properties": {
+    "version": {
+      "description": "Source manifest schema version.",
+      "const": 1
+    },
+    "gitignore": {
+      "description": "Entries driftline appends to the Target Repository .gitignore.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "files": {
+      "description": "Files made available by the Source Repository.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/file"
+      }
+    }
+  },
+  "$defs": {
+    "file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "source"],
+      "properties": {
+        "id": {
+          "description": "Stable file identifier used by Target Config entries.",
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "source": {
+          "description": "Relative path to the file in the Source Repository.",
+          "$ref": "#/$defs/relativePath"
+        },
+        "if_not_exists": {
+          "description": "When true, driftline does not overwrite an existing target file.",
+          "type": "boolean"
+        }
+      }
+    },
+    "relativePath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!\\s)(?!.*\\s$)(?!/)(?!\\.$)(?!.*//)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\).+$"
+    }
+  }
+}
