@@ -6,8 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/y-writings/driftline/src/internal/driftline"
 )
 
 type commandFakeSourceClient struct {
@@ -176,10 +174,13 @@ func TestCheckReportsMissingLockAndUpdateCreatesIt(t *testing.T) {
 		t.Fatalf("unexpected copied file: %q", got)
 	}
 	lock := readFile(t, targetDir, "driftline-lock.yaml")
-	for _, want := range []string{"version: 1", "repository: y-writings/source-repo", "ref: main", "commit: 0123456789abcdef0123456789abcdef01234567", "target_sha256:"} {
+	for _, want := range []string{"version: 1", "repository: y-writings/source-repo", "ref: main", "commit: 0123456789abcdef0123456789abcdef01234567", "target: sample.txt"} {
 		if !strings.Contains(lock, want) {
 			t.Fatalf("lock missing %q:\n%s", want, lock)
 		}
+	}
+	if strings.Contains(lock, "source_sha256") || strings.Contains(lock, "target_sha256") {
+		t.Fatalf("lock must not store file content hashes:\n%s", lock)
 	}
 	gitignore := readFile(t, targetDir, ".gitignore")
 	if !strings.Contains(gitignore, ".cache/tool") {
@@ -212,25 +213,24 @@ func TestUpdatePreservesIfNotExistsLocalEdits(t *testing.T) {
 	}
 }
 
-func TestPruneFailsWhenStaleFileHasLocalChanges(t *testing.T) {
+func TestPruneRemovesStaleFileWithoutHashMetadata(t *testing.T) {
 	targetDir := t.TempDir()
 	writeFile(t, targetDir, "driftline.yaml", "version: 1\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles: []\n")
 	writeFile(t, targetDir, "old.txt", "changed\n")
-	writeFile(t, targetDir, "driftline-lock.yaml", "version: 1\nrepository: y-writings/source-repo\nref: main\ncommit: 0123456789abcdef0123456789abcdef01234567\nfiles:\n  - id: old\n    target: old.txt\n    source_sha256: 0000\n    target_sha256: 0000\n")
+	writeFile(t, targetDir, "driftline-lock.yaml", "version: 1\nrepository: y-writings/source-repo\nref: main\ncommit: 0123456789abcdef0123456789abcdef01234567\nfiles:\n  - id: old\n    target: old.txt\n")
 	client := commandFakeSourceClient{
 		refs:  map[string]string{"y-writings/source-repo@main": "0123456789abcdef0123456789abcdef01234567"},
 		files: map[string][]byte{"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:driftline.yaml": []byte("version: 1\nfiles: []\n")},
 	}
 	var stdout, stderr bytes.Buffer
-	err := Runner{Source: client}.Run([]string{"prune", "--target-dir", targetDir}, &stdout, &stderr)
-	if err == nil {
-		t.Fatal("expected prune conflict failure")
+	if err := (Runner{Source: client}).Run([]string{"prune", "--target-dir", targetDir}, &stdout, &stderr); err != nil {
+		t.Fatalf("prune failed: %v", err)
 	}
-	if !strings.Contains(stdout.String(), "conflict old") {
-		t.Fatalf("expected conflict output, got %q", stdout.String())
+	if !strings.Contains(stdout.String(), "prune old") {
+		t.Fatalf("expected prune output, got %q", stdout.String())
 	}
-	if got := readFile(t, targetDir, "old.txt"); got != "changed\n" {
-		t.Fatalf("expected stale file to remain, got %q", got)
+	if _, err := os.Stat(filepath.Join(targetDir, "old.txt")); !os.IsNotExist(err) {
+		t.Fatalf("expected stale file to be removed, stat err=%v", err)
 	}
 }
 
@@ -238,12 +238,10 @@ func TestPruneDoesNotAdvanceActiveLockEntries(t *testing.T) {
 	targetDir := t.TempDir()
 	oldCommit := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	newCommit := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	activeHash := driftline.HashBytes([]byte("old\n"))
-	staleHash := driftline.HashBytes([]byte("stale\n"))
 	writeFile(t, targetDir, "driftline.yaml", "version: 1\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: sample\n")
 	writeFile(t, targetDir, "sample.txt", "old\n")
 	writeFile(t, targetDir, "old.txt", "stale\n")
-	writeFile(t, targetDir, "driftline-lock.yaml", "version: 1\nrepository: y-writings/source-repo\nref: main\ncommit: "+oldCommit+"\nfiles:\n  - id: sample\n    target: sample.txt\n    source_sha256: "+activeHash+"\n    target_sha256: "+activeHash+"\n  - id: old\n    target: old.txt\n    source_sha256: "+staleHash+"\n    target_sha256: "+staleHash+"\n")
+	writeFile(t, targetDir, "driftline-lock.yaml", "version: 1\nrepository: y-writings/source-repo\nref: main\ncommit: "+oldCommit+"\nfiles:\n  - id: sample\n    target: sample.txt\n  - id: old\n    target: old.txt\n")
 	client := commandFakeSourceClient{
 		refs: map[string]string{"y-writings/source-repo@main": newCommit},
 		files: map[string][]byte{
@@ -263,8 +261,11 @@ func TestPruneDoesNotAdvanceActiveLockEntries(t *testing.T) {
 	if strings.Contains(lock, newCommit) {
 		t.Fatalf("prune must not advance active lock commit:\n%s", lock)
 	}
-	if !strings.Contains(lock, "commit: "+oldCommit) || !strings.Contains(lock, "source_sha256: "+activeHash) {
+	if !strings.Contains(lock, "commit: "+oldCommit) || !strings.Contains(lock, "target: sample.txt") {
 		t.Fatalf("prune must preserve active lock metadata:\n%s", lock)
+	}
+	if strings.Contains(lock, "source_sha256") || strings.Contains(lock, "target_sha256") {
+		t.Fatalf("lock must not store file content hashes:\n%s", lock)
 	}
 	if strings.Contains(lock, "target: old.txt") {
 		t.Fatalf("prune must remove stale lock entry:\n%s", lock)

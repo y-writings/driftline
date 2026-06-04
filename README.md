@@ -72,7 +72,7 @@ Use `--target-dir` to operate on another Target Repository path.
 
 ## Lock File
 
-`driftline update` writes `driftline-lock.yaml` with the resolved Git commit and file hashes.
+`driftline update` writes `driftline-lock.yaml` with the resolved Git commit and managed target files.
 
 ```yaml
 version: 1
@@ -82,8 +82,6 @@ commit: 0123456789abcdef0123456789abcdef01234567
 files:
   - id: example
     target: example.txt
-    source_sha256: ...
-    target_sha256: ...
 ```
 
 ## GitHub Authentication
