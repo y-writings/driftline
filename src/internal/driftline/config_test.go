@@ -78,9 +78,21 @@ func TestLoadTargetConfigRejectsBadRepositoryAndDuplicateFilesKey(t *testing.T) 
 }
 
 func TestLoadLockFileRejectsDuplicateTarget(t *testing.T) {
-	_, err := LoadLockBytes([]byte("version: 1\nrepository: y-writings/source-repo\nref: main\ncommit: 0123456789abcdef0123456789abcdef01234567\nfiles:\n  - id: first\n    target: same.txt\n    source_sha256: a\n    target_sha256: a\n  - id: second\n    target: same.txt\n    source_sha256: b\n    target_sha256: b\n"))
+	_, err := LoadLockBytes([]byte("version: 1\nrepository: y-writings/source-repo\nref: main\ncommit: 0123456789abcdef0123456789abcdef01234567\nfiles:\n  - id: first\n    target: same.txt\n  - id: second\n    target: same.txt\n"))
 	if err == nil {
 		t.Fatal("expected duplicate target error")
+	}
+}
+
+func TestLoadLockFileRejectsHashFields(t *testing.T) {
+	_, err := LoadLockBytes([]byte("version: 1\nrepository: y-writings/source-repo\nref: main\ncommit: 0123456789abcdef0123456789abcdef01234567\nfiles:\n  - id: sample\n    target: sample.txt\n    source_sha256: old\n"))
+	if err == nil || !strings.Contains(err.Error(), "unknown key") {
+		t.Fatalf("expected source_sha256 to be rejected as an unknown key, got %v", err)
+	}
+
+	_, err = LoadLockBytes([]byte("version: 1\nrepository: y-writings/source-repo\nref: main\ncommit: 0123456789abcdef0123456789abcdef01234567\nfiles:\n  - id: sample\n    target: sample.txt\n    target_sha256: old\n"))
+	if err == nil || !strings.Contains(err.Error(), "unknown key") {
+		t.Fatalf("expected target_sha256 to be rejected as an unknown key, got %v", err)
 	}
 }
 

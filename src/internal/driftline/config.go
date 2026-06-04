@@ -140,7 +140,7 @@ func allowedTargetConfigKeys() map[string]map[string]struct{} {
 func allowedLockKeys() map[string]map[string]struct{} {
 	return map[string]map[string]struct{}{
 		"":      set("version", "repository", "ref", "commit", "files"),
-		"files": set("id", "target", "source_sha256", "target_sha256"),
+		"files": set("id", "target"),
 	}
 }
 
@@ -317,9 +317,6 @@ func validateLock(lock LockFile, root *yaml.Node) error {
 		}
 		if err := ValidateConfigPath(item.Target, fmt.Sprintf("target %q", item.ID)); err != nil {
 			return err
-		}
-		if item.SourceSHA256 == "" || item.TargetSHA256 == "" {
-			return fmt.Errorf("lock item %q must define source_sha256 and target_sha256", item.ID)
 		}
 		identity := item.ID + "\x00" + item.Target
 		if _, ok := seenIdentity[identity]; ok {

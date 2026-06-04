@@ -57,11 +57,11 @@ func TestBuildPlanDetectsMissingLockAndAdd(t *testing.T) {
 	assertPlanHasChange(t, plan, StatusAdd, "sample", "target file is missing")
 }
 
-func TestBuildPlanPreservesIfNotExistsTargetHashAcrossUpdates(t *testing.T) {
+func TestBuildPlanPreservesIfNotExistsTargetWithoutHashMetadata(t *testing.T) {
 	targetDir := t.TempDir()
 	writePlanFile(t, targetDir, "driftline.yaml", "version: 1\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: local-config\n    target: config.local\n")
 	writePlanFile(t, targetDir, "config.local", "edited-local\n")
-	writePlanFile(t, targetDir, "driftline-lock.yaml", "version: 1\nrepository: y-writings/source-repo\nref: main\ncommit: oldoldoldoldoldoldoldoldoldoldoldoldoldoldoldold\nfiles:\n  - id: local-config\n    target: config.local\n    source_sha256: old-source\n    target_sha256: locked-target\n")
+	writePlanFile(t, targetDir, "driftline-lock.yaml", "version: 1\nrepository: y-writings/source-repo\nref: main\ncommit: oldoldoldoldoldoldoldoldoldoldoldoldoldoldoldold\nfiles:\n  - id: local-config\n    target: config.local\n")
 
 	client := fakeSourceClient{
 		refs: map[string]string{"y-writings/source-repo@main": "0123456789abcdef0123456789abcdef01234567"},
@@ -75,19 +75,43 @@ func TestBuildPlanPreservesIfNotExistsTargetHashAcrossUpdates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build plan failed: %v", err)
 	}
-	item := plan.NextLockItem("local-config", "config.local")
-	if item.TargetSHA256 != "locked-target" {
-		t.Fatalf("target hash should remain locked, got %#v", item)
+	if item := plan.NextLockItem("local-config", "config.local"); item.Target != "config.local" {
+		t.Fatalf("expected existing target to remain locked by identity, got %#v", item)
 	}
-	assertPlanHasChange(t, plan, StatusUpdate, "local-config", "target preserved because if_not_exists is enabled")
+	assertPlanHasChange(t, plan, StatusUpdate, "lock", "source commit changed")
+	assertPlanDoesNotHaveChange(t, plan, StatusUpdate, "local-config")
+}
+
+func TestBuildPlanReportsManagedTargetEditAsDriftWithoutHashMetadata(t *testing.T) {
+	targetDir := t.TempDir()
+	writePlanFile(t, targetDir, "driftline.yaml", "version: 1\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: sample\n")
+	writePlanFile(t, targetDir, "sample.txt", "edited-local\n")
+	writePlanFile(t, targetDir, "driftline-lock.yaml", "version: 1\nrepository: y-writings/source-repo\nref: main\ncommit: 0123456789abcdef0123456789abcdef01234567\nfiles:\n  - id: sample\n    target: sample.txt\n")
+
+	client := fakeSourceClient{
+		refs: map[string]string{"y-writings/source-repo@main": "0123456789abcdef0123456789abcdef01234567"},
+		files: map[string][]byte{
+			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:driftline.yaml": []byte("version: 1\nfiles:\n  - id: sample\n    source: sample.txt\n"),
+			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:sample.txt":     []byte("from-source\n"),
+		},
+	}
+
+	plan, err := BuildPlan(PlanOptions{TargetDir: targetDir, Source: client})
+	if err != nil {
+		t.Fatalf("build plan failed: %v", err)
+	}
+
+	change := planChange(t, plan, StatusUpdate, "sample")
+	if !change.WritesTarget || !strings.Contains(change.Reason, "target differs from source") {
+		t.Fatalf("expected managed target edit to be overwritten from source, got %#v", change)
+	}
 }
 
 func TestBuildPlanLeavesOldTargetAsPruneCandidateWhenDefaultSourcePathChanges(t *testing.T) {
 	targetDir := t.TempDir()
 	writePlanFile(t, targetDir, "driftline.yaml", "version: 1\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: sample\n")
 	writePlanFile(t, targetDir, "old.txt", "old\n")
-	oldHash := HashBytes([]byte("old\n"))
-	writePlanFile(t, targetDir, "driftline-lock.yaml", "version: 1\nrepository: y-writings/source-repo\nref: main\ncommit: oldoldoldoldoldoldoldoldoldoldoldoldoldoldoldold\nfiles:\n  - id: sample\n    target: old.txt\n    source_sha256: "+oldHash+"\n    target_sha256: "+oldHash+"\n")
+	writePlanFile(t, targetDir, "driftline-lock.yaml", "version: 1\nrepository: y-writings/source-repo\nref: main\ncommit: oldoldoldoldoldoldoldoldoldoldoldoldoldoldoldold\nfiles:\n  - id: sample\n    target: old.txt\n")
 
 	client := fakeSourceClient{
 		refs: map[string]string{"y-writings/source-repo@main": "0123456789abcdef0123456789abcdef01234567"},
@@ -152,8 +176,7 @@ func TestBuildPlanTreatsNormalizedLockTargetAsActive(t *testing.T) {
 	targetDir := t.TempDir()
 	writePlanFile(t, targetDir, "driftline.yaml", "version: 1\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: sample\n    target: ./foo.txt\n")
 	writePlanFile(t, targetDir, "foo.txt", "hello\n")
-	hash := HashBytes([]byte("hello\n"))
-	writePlanFile(t, targetDir, "driftline-lock.yaml", "version: 1\nrepository: y-writings/source-repo\nref: main\ncommit: 0123456789abcdef0123456789abcdef01234567\nfiles:\n  - id: sample\n    target: foo.txt\n    source_sha256: "+hash+"\n    target_sha256: "+hash+"\n")
+	writePlanFile(t, targetDir, "driftline-lock.yaml", "version: 1\nrepository: y-writings/source-repo\nref: main\ncommit: 0123456789abcdef0123456789abcdef01234567\nfiles:\n  - id: sample\n    target: foo.txt\n")
 	client := fakeSourceClient{
 		refs: map[string]string{"y-writings/source-repo@main": "0123456789abcdef0123456789abcdef01234567"},
 		files: map[string][]byte{
@@ -166,7 +189,7 @@ func TestBuildPlanTreatsNormalizedLockTargetAsActive(t *testing.T) {
 		t.Fatalf("build plan failed: %v", err)
 	}
 	for _, change := range plan.Changes {
-		if change.Status == StatusPrune || change.Status == StatusConflict {
+		if change.Status == StatusPrune {
 			t.Fatalf("normalized active target should not be stale: %#v", plan.Changes)
 		}
 	}
@@ -219,8 +242,7 @@ func TestBuildPlanDropsStaleLockEntryWhenTargetIsActiveAgain(t *testing.T) {
 	targetDir := t.TempDir()
 	writePlanFile(t, targetDir, "driftline.yaml", "version: 1\nsource:\n  repository: y-writings/new-source\n  ref: main\nfiles:\n  - id: sample\n    target: same.txt\n")
 	writePlanFile(t, targetDir, "same.txt", "old\n")
-	oldHash := HashBytes([]byte("old\n"))
-	writePlanFile(t, targetDir, "driftline-lock.yaml", "version: 1\nrepository: y-writings/old-source\nref: main\ncommit: oldoldoldoldoldoldoldoldoldoldoldoldoldoldoldold\nfiles:\n  - id: old-id\n    target: same.txt\n    source_sha256: "+oldHash+"\n    target_sha256: "+oldHash+"\n")
+	writePlanFile(t, targetDir, "driftline-lock.yaml", "version: 1\nrepository: y-writings/old-source\nref: main\ncommit: oldoldoldoldoldoldoldoldoldoldoldoldoldoldoldold\nfiles:\n  - id: old-id\n    target: same.txt\n")
 	client := fakeSourceClient{
 		refs: map[string]string{"y-writings/new-source@main": "0123456789abcdef0123456789abcdef01234567"},
 		files: map[string][]byte{
@@ -258,4 +280,24 @@ func assertPlanHasChange(t *testing.T, plan Plan, status Status, id string, reas
 		}
 	}
 	t.Fatalf("missing change %s %s containing %q in %#v", status, id, reason, plan.Changes)
+}
+
+func planChange(t *testing.T, plan Plan, status Status, id string) Change {
+	t.Helper()
+	for _, change := range plan.Changes {
+		if change.Status == status && change.ID == id {
+			return change
+		}
+	}
+	t.Fatalf("missing change %s %s in %#v", status, id, plan.Changes)
+	return Change{}
+}
+
+func assertPlanDoesNotHaveChange(t *testing.T, plan Plan, status Status, id string) {
+	t.Helper()
+	for _, change := range plan.Changes {
+		if change.Status == status && change.ID == id {
+			t.Fatalf("unexpected change %s %s in %#v", status, id, plan.Changes)
+		}
+	}
 }

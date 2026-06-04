@@ -20,21 +20,16 @@ func runPrune(source driftline.SourceClient, opts TargetOptions, stdout io.Write
 		return nil
 	}
 	pruned := false
-	conflicted := false
 	next := plan.Lock
 	next.Files = append([]driftline.LockItem(nil), plan.Lock.Files...)
 	for _, change := range sortedChanges(plan.Changes) {
-		switch change.Status {
-		case driftline.StatusPrune:
+		if change.Status == driftline.StatusPrune {
 			if err := os.Remove(change.TargetPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 				return fmt.Errorf("prune %s: %w", change.ID, err)
 			}
 			next.Files = removeLockItem(next.Files, change.ID, change.Target)
 			fmt.Fprintf(stdout, "prune %s: %s\n", change.ID, change.Reason)
 			pruned = true
-		case driftline.StatusConflict:
-			fmt.Fprintf(stdout, "conflict %s: %s\n", change.ID, change.Reason)
-			conflicted = true
 		}
 	}
 	if pruned {
@@ -42,11 +37,8 @@ func runPrune(source driftline.SourceClient, opts TargetOptions, stdout io.Write
 			return err
 		}
 	}
-	if !pruned && !conflicted {
+	if !pruned {
 		fmt.Fprintln(stdout, "nothing to prune")
-	}
-	if conflicted {
-		return errDrift
 	}
 	return nil
 }

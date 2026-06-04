@@ -151,9 +151,8 @@ func (b planBuilder) build() (Plan, error) {
 			return Plan{}, fmt.Errorf("hash target %s: %w", resolved.target, err)
 		}
 
-		locked := lockByIdentity[lockIdentity(resolved.id, resolved.target)]
-		change := activeChange(resolved, sourceBytes, sourceHash, targetPath, currentHash, targetExists, locked)
-		plan.NextLock.Files = append(plan.NextLock.Files, nextActiveLockItem(resolved, sourceHash, currentHash, targetExists, locked))
+		change := activeChange(resolved, sourceBytes, sourceHash, targetPath, currentHash, targetExists)
+		plan.NextLock.Files = append(plan.NextLock.Files, nextActiveLockItem(resolved))
 		plan.Changes = append(plan.Changes, change)
 	}
 
@@ -185,18 +184,13 @@ func resolveTargetConfigFile(configured TargetConfigFile, manifestItem SourceMan
 	return resolvedFile{id: configured.ID, source: manifestItem.Source, target: target, ifNotExists: ifNotExists}
 }
 
-func activeChange(file resolvedFile, sourceBytes []byte, sourceHash string, targetPath string, currentHash string, targetExists bool, locked LockItem) Change {
+func activeChange(file resolvedFile, sourceBytes []byte, sourceHash string, targetPath string, currentHash string, targetExists bool) Change {
 	change := Change{
-		ID:           file.id,
-		Target:       file.target,
-		SourcePath:   file.source,
-		TargetPath:   targetPath,
-		SourceBytes:  sourceBytes,
-		SourceHash:   sourceHash,
-		CurrentHash:  currentHash,
-		LockedSource: locked.SourceSHA256,
-		LockedTarget: locked.TargetSHA256,
-		Status:       StatusSynced,
+		ID:          file.id,
+		Target:      file.target,
+		TargetPath:  targetPath,
+		SourceBytes: sourceBytes,
+		Status:      StatusSynced,
 	}
 	switch {
 	case !targetExists:
@@ -204,11 +198,7 @@ func activeChange(file resolvedFile, sourceBytes []byte, sourceHash string, targ
 		change.Reason = "target file is missing"
 		change.WritesTarget = true
 	case file.ifNotExists:
-		change.PreservesTarget = true
-		if locked.SourceSHA256 != sourceHash {
-			change.Status = StatusUpdate
-			change.Reason = "target preserved because if_not_exists is enabled"
-		}
+		// Existing if_not_exists targets are intentionally left untouched.
 	case currentHash != sourceHash:
 		change.Status = StatusUpdate
 		change.Reason = "target differs from source"
@@ -217,19 +207,10 @@ func activeChange(file resolvedFile, sourceBytes []byte, sourceHash string, targ
 	return change
 }
 
-func nextActiveLockItem(file resolvedFile, sourceHash string, currentHash string, targetExists bool, locked LockItem) LockItem {
-	targetHash := sourceHash
-	if file.ifNotExists && targetExists {
-		targetHash = currentHash
-		if locked.TargetSHA256 != "" {
-			targetHash = locked.TargetSHA256
-		}
-	}
+func nextActiveLockItem(file resolvedFile) LockItem {
 	return LockItem{
-		ID:           file.id,
-		Target:       file.target,
-		SourceSHA256: sourceHash,
-		TargetSHA256: targetHash,
+		ID:     file.id,
+		Target: file.target,
 	}
 }
 
@@ -238,23 +219,12 @@ func (b planBuilder) staleChange(item LockItem) (Change, error) {
 	if err != nil {
 		return Change{}, err
 	}
-	currentHash, targetExists, err := FileHash(targetPath)
-	if err != nil {
-		return Change{}, fmt.Errorf("hash stale target %s: %w", item.Target, err)
-	}
 	change := Change{
-		ID:           item.ID,
-		Target:       item.Target,
-		TargetPath:   targetPath,
-		CurrentHash:  currentHash,
-		LockedSource: item.SourceSHA256,
-		LockedTarget: item.TargetSHA256,
-		Status:       StatusPrune,
-		Reason:       "target is no longer adopted",
-	}
-	if targetExists && currentHash != item.TargetSHA256 {
-		change.Status = StatusConflict
-		change.Reason = "target has local changes"
+		ID:         item.ID,
+		Target:     item.Target,
+		TargetPath: targetPath,
+		Status:     StatusPrune,
+		Reason:     "target is no longer adopted",
 	}
 	return change, nil
 }

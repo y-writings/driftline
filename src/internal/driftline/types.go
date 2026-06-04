@@ -38,34 +38,25 @@ type LockFile struct {
 }
 
 type LockItem struct {
-	ID           string `yaml:"id"`
-	Target       string `yaml:"target"`
-	SourceSHA256 string `yaml:"source_sha256"`
-	TargetSHA256 string `yaml:"target_sha256"`
+	ID     string `yaml:"id"`
+	Target string `yaml:"target"`
 }
 
 type Status string
 
 const (
-	StatusSynced   Status = "synced"
-	StatusAdd      Status = "add"
-	StatusUpdate   Status = "update"
-	StatusPrune    Status = "prune"
-	StatusConflict Status = "conflict"
+	StatusSynced Status = "synced"
+	StatusAdd    Status = "add"
+	StatusUpdate Status = "update"
+	StatusPrune  Status = "prune"
 )
 
 type Change struct {
-	ID              string
-	Target          string
-	SourcePath      string
-	TargetPath      string
-	SourceBytes     []byte
-	SourceHash      string
-	CurrentHash     string
-	LockedSource    string
-	LockedTarget    string
-	Status          Status
-	Reason          string
-	WritesTarget    bool
-	PreservesTarget bool
+	ID           string
+	Target       string
+	TargetPath   string
+	SourceBytes  []byte
+	Status       Status
+	Reason       string
+	WritesTarget bool
 }
