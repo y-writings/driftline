@@ -104,7 +104,7 @@ func TestValidateConfigPath(t *testing.T) {
 		}
 	}
 
-	invalid := []string{"", " ", "/abs", ".", "..", "../x", "a/../b", "a\\b", " leading.txt", "trailing.txt "}
+	invalid := []string{"", " ", "/abs", ".", "..", "../x", "a/../b", "a\\b", "templates/", " leading.txt", "trailing.txt "}
 	for _, path := range invalid {
 		if err := ValidateConfigPath(path, "test"); err == nil || !strings.Contains(err.Error(), "test") {
 			t.Fatalf("expected labelled validation error for %q, got %v", path, err)

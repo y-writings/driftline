@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -26,6 +27,16 @@ func TestSourceManifestSchemaMatchesParserAllowedKeys(t *testing.T) {
 	assertSameStringSet(t, "file required", stringArrayValue(fileItemSchema, "required"), map[string]struct{}{"id": {}, "source": {}})
 	if _, ok := fileProperties["target"]; ok {
 		t.Fatal("source manifest schema must not allow file target")
+	}
+}
+
+func TestSourceManifestSchemaRejectsTrailingSlashSourcePaths(t *testing.T) {
+	schema := readSourceManifestSchema(t)
+	relativePath := objectValue(objectValue(schema, "$defs"), "relativePath")
+	pattern := stringValue(relativePath, "pattern")
+
+	if !strings.Contains(pattern, "(?!.*/$)") {
+		t.Fatalf("relativePath pattern must reject trailing slash paths, got %q", pattern)
 	}
 }
 
