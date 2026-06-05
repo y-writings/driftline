@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/y-writings/driftline/main/schema.json",
   "title": "driftline Source Manifest",
-  "description": "Schema for driftline.yaml in a Source Repository. Target paths are configured by Target Repositories, not in this manifest.",
+  "description": "Schema for .driftline-source.yaml in a Source Repository. Target paths are configured by Target Repositories, not in this manifest.",
   "type": "object",
   "additionalProperties": false,
   "required": ["version", "files"],
@@ -30,7 +30,7 @@
     "file": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "source"],
+      "required": ["id", "source_path"],
       "properties": {
         "id": {
           "description": "Stable file identifier used by Target Config entries.",
@@ -38,7 +38,7 @@
           "minLength": 1,
           "pattern": "\\S"
         },
-        "source": {
+        "source_path": {
           "description": "Relative path to the file in the Source Repository.",
           "$ref": "#/$defs/relativePath"
         },

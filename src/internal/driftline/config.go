@@ -11,8 +11,9 @@ import (
 )
 
 const (
-	TargetConfigPath = "driftline.yaml"
-	LockFilePath     = "driftline-lock.yaml"
+	SourceManifestPath = ".driftline-source.yaml"
+	TargetConfigPath   = ".driftline-target.yaml"
+	LockFilePath       = "driftline-lock.yaml"
 )
 
 func LoadSourceManifestBytes(data []byte) (SourceManifest, error) {
@@ -72,7 +73,7 @@ func TargetConfigFromSourceManifest(repository string, ref string, manifest Sour
 	}
 	seenDefaultTargets := map[string]struct{}{}
 	for _, item := range manifest.Files {
-		defaultTarget := normalizedTargetPath(item.Source)
+		defaultTarget := normalizedTargetPath(item.SourcePath)
 		if _, ok := seenDefaultTargets[defaultTarget]; ok {
 			return TargetConfig{}, fmt.Errorf("duplicate target %q", defaultTarget)
 		}
@@ -125,7 +126,7 @@ func WriteLock(path string, lock LockFile) error {
 func allowedSourceManifestKeys() map[string]map[string]struct{} {
 	return map[string]map[string]struct{}{
 		"":      set("version", "gitignore", "files"),
-		"files": set("id", "source", "if_not_exists"),
+		"files": set("id", "source_path", "if_not_exists"),
 	}
 }
 
@@ -133,14 +134,14 @@ func allowedTargetConfigKeys() map[string]map[string]struct{} {
 	return map[string]map[string]struct{}{
 		"":       set("version", "source", "files"),
 		"source": set("repository", "ref"),
-		"files":  set("id", "target", "if_not_exists"),
+		"files":  set("id", "target_path", "if_not_exists"),
 	}
 }
 
 func allowedLockKeys() map[string]map[string]struct{} {
 	return map[string]map[string]struct{}{
 		"":      set("version", "repository", "ref", "commit", "files"),
-		"files": set("id", "target"),
+		"files": set("id", "target_path"),
 	}
 }
 
@@ -252,7 +253,7 @@ func validateSourceManifest(manifest SourceManifest, root *yaml.Node) error {
 			return fmt.Errorf("duplicate source manifest file id %q", item.ID)
 		}
 		seen[item.ID] = struct{}{}
-		if err := ValidateConfigPath(item.Source, fmt.Sprintf("source %q", item.ID)); err != nil {
+		if err := ValidateConfigPath(item.SourcePath, fmt.Sprintf("source %q", item.ID)); err != nil {
 			return err
 		}
 	}
@@ -284,8 +285,8 @@ func validateTargetConfig(config TargetConfig, root *yaml.Node) error {
 			return fmt.Errorf("duplicate target config file id %q", item.ID)
 		}
 		seen[item.ID] = struct{}{}
-		if item.Target != "" {
-			if err := ValidateConfigPath(item.Target, fmt.Sprintf("target %q", item.ID)); err != nil {
+		if item.TargetPath != "" {
+			if err := ValidateConfigPath(item.TargetPath, fmt.Sprintf("target %q", item.ID)); err != nil {
 				return err
 			}
 		}
@@ -315,18 +316,18 @@ func validateLock(lock LockFile, root *yaml.Node) error {
 		if strings.TrimSpace(item.ID) == "" {
 			return errors.New("lock file contains item without id")
 		}
-		if err := ValidateConfigPath(item.Target, fmt.Sprintf("target %q", item.ID)); err != nil {
+		if err := ValidateConfigPath(item.TargetPath, fmt.Sprintf("target %q", item.ID)); err != nil {
 			return err
 		}
-		identity := item.ID + "\x00" + item.Target
+		identity := item.ID + "\x00" + item.TargetPath
 		if _, ok := seenIdentity[identity]; ok {
-			return fmt.Errorf("duplicate lock item %q target %q", item.ID, item.Target)
+			return fmt.Errorf("duplicate lock item %q target %q", item.ID, item.TargetPath)
 		}
 		seenIdentity[identity] = struct{}{}
-		if _, ok := seenTarget[item.Target]; ok {
-			return fmt.Errorf("duplicate target %q", item.Target)
+		if _, ok := seenTarget[item.TargetPath]; ok {
+			return fmt.Errorf("duplicate target %q", item.TargetPath)
 		}
-		seenTarget[item.Target] = struct{}{}
+		seenTarget[item.TargetPath] = struct{}{}
 	}
 	return nil
 }

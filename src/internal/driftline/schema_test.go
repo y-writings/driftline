@@ -24,7 +24,10 @@ func TestSourceManifestSchemaMatchesParserAllowedKeys(t *testing.T) {
 	assertFalseValue(t, "file item additionalProperties", fileItemSchema, "additionalProperties")
 	fileProperties := propertyNames(objectValue(fileItemSchema, "properties"))
 	assertSameStringSet(t, "file properties", fileProperties, allowed["files"])
-	assertSameStringSet(t, "file required", stringArrayValue(fileItemSchema, "required"), map[string]struct{}{"id": {}, "source": {}})
+	assertSameStringSet(t, "file required", stringArrayValue(fileItemSchema, "required"), map[string]struct{}{"id": {}, "source_path": {}})
+	if _, ok := fileProperties["source"]; ok {
+		t.Fatal("source manifest schema must not allow old file source key")
+	}
 	if _, ok := fileProperties["target"]; ok {
 		t.Fatal("source manifest schema must not allow file target")
 	}
