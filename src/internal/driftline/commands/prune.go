@@ -46,7 +46,7 @@ func runPrune(source driftline.SourceClient, opts TargetOptions, stdout io.Write
 func removeLockItem(items []driftline.LockItem, id string, target string) []driftline.LockItem {
 	out := items[:0]
 	for _, item := range items {
-		if item.ID == id && item.Target == target {
+		if item.ID == id && item.TargetPath == target {
 			continue
 		}
 		out = append(out, item)

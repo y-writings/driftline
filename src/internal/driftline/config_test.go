@@ -6,12 +6,15 @@ import (
 )
 
 func TestLoadSourceManifestStrictValidation(t *testing.T) {
-	manifest, err := LoadSourceManifestBytes([]byte("version: 1\ngitignore:\n  - ' .cache/tool '\n  - ''\nfiles:\n  - id: example\n    source: templates/example.txt\n  - id: local-config\n    source: templates/config.local\n    if_not_exists: true\n"))
+	manifest, err := LoadSourceManifestBytes([]byte("version: 1\ngitignore:\n  - ' .cache/tool '\n  - ''\nfiles:\n  - id: example\n    source_path: templates/example.txt\n  - id: local-config\n    source_path: templates/config.local\n    if_not_exists: true\n"))
 	if err != nil {
 		t.Fatalf("load source manifest failed: %v", err)
 	}
 	if manifest.Version != 1 || len(manifest.Files) != 2 {
 		t.Fatalf("unexpected manifest: %#v", manifest)
+	}
+	if manifest.Files[0].SourcePath != "templates/example.txt" {
+		t.Fatalf("unexpected source path: %#v", manifest.Files[0])
 	}
 	if !manifest.Files[1].IfNotExists {
 		t.Fatalf("expected if_not_exists true")
@@ -25,8 +28,9 @@ func TestLoadSourceManifestRejectsUnknownAndDuplicateKeys(t *testing.T) {
 	for name, input := range map[string]string{
 		"unknown root":   "version: 1\nextra: true\nfiles: []\n",
 		"duplicate root": "version: 1\nversion: 1\nfiles: []\n",
-		"unknown file":   "version: 1\nfiles:\n  - id: sample\n    source: sample.txt\n    extra: true\n",
-		"target file":    "version: 1\nfiles:\n  - id: sample\n    source: sample.txt\n    target: sample.txt\n",
+		"unknown file":   "version: 1\nfiles:\n  - id: sample\n    source_path: sample.txt\n    extra: true\n",
+		"old source key": "version: 1\nfiles:\n  - id: sample\n    source: sample.txt\n",
+		"target file":    "version: 1\nfiles:\n  - id: sample\n    source_path: sample.txt\n    target: sample.txt\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := LoadSourceManifestBytes([]byte(input))
@@ -38,20 +42,30 @@ func TestLoadSourceManifestRejectsUnknownAndDuplicateKeys(t *testing.T) {
 }
 
 func TestLoadTargetConfigDistinguishesOmittedAndExplicitFalse(t *testing.T) {
-	config, err := LoadTargetConfigBytes([]byte("version: 1\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: inherited\n  - id: explicit\n    target: custom.txt\n    if_not_exists: false\n"))
+	config, err := LoadTargetConfigBytes([]byte("version: 1\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: inherited\n  - id: explicit\n    target_path: custom.txt\n    if_not_exists: false\n"))
 	if err != nil {
 		t.Fatalf("load target config failed: %v", err)
 	}
 	if config.Files[0].IfNotExists != nil {
 		t.Fatalf("expected omitted if_not_exists to stay nil")
 	}
+	if config.Files[1].TargetPath != "custom.txt" {
+		t.Fatalf("expected target_path to decode, got %#v", config.Files[1])
+	}
 	if config.Files[1].IfNotExists == nil || *config.Files[1].IfNotExists {
 		t.Fatalf("expected explicit false override, got %#v", config.Files[1].IfNotExists)
 	}
 }
 
+func TestLoadTargetConfigRejectsOldTargetKey(t *testing.T) {
+	_, err := LoadTargetConfigBytes([]byte("version: 1\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: explicit\n    target: custom.txt\n"))
+	if err == nil || !strings.Contains(err.Error(), "unknown key") {
+		t.Fatalf("expected target to be rejected as an unknown key, got %v", err)
+	}
+}
+
 func TestTargetConfigFromSourceManifestRejectsDuplicateDefaultTargets(t *testing.T) {
-	manifest, err := LoadSourceManifestBytes([]byte("version: 1\nfiles:\n  - id: first\n    source: same.txt\n  - id: second\n    source: ./same.txt\n"))
+	manifest, err := LoadSourceManifestBytes([]byte("version: 1\nfiles:\n  - id: first\n    source_path: same.txt\n  - id: second\n    source_path: ./same.txt\n"))
 	if err != nil {
 		t.Fatalf("load source manifest failed: %v", err)
 	}
@@ -78,19 +92,26 @@ func TestLoadTargetConfigRejectsBadRepositoryAndDuplicateFilesKey(t *testing.T) 
 }
 
 func TestLoadLockFileRejectsDuplicateTarget(t *testing.T) {
-	_, err := LoadLockBytes([]byte("version: 1\nrepository: y-writings/source-repo\nref: main\ncommit: 0123456789abcdef0123456789abcdef01234567\nfiles:\n  - id: first\n    target: same.txt\n  - id: second\n    target: same.txt\n"))
+	_, err := LoadLockBytes([]byte("version: 1\nrepository: y-writings/source-repo\nref: main\ncommit: 0123456789abcdef0123456789abcdef01234567\nfiles:\n  - id: first\n    target_path: same.txt\n  - id: second\n    target_path: same.txt\n"))
 	if err == nil {
 		t.Fatal("expected duplicate target error")
 	}
 }
 
+func TestLoadLockFileRejectsOldTargetKey(t *testing.T) {
+	_, err := LoadLockBytes([]byte("version: 1\nrepository: y-writings/source-repo\nref: main\ncommit: 0123456789abcdef0123456789abcdef01234567\nfiles:\n  - id: sample\n    target: sample.txt\n"))
+	if err == nil || !strings.Contains(err.Error(), "unknown key") {
+		t.Fatalf("expected target to be rejected as an unknown key, got %v", err)
+	}
+}
+
 func TestLoadLockFileRejectsHashFields(t *testing.T) {
-	_, err := LoadLockBytes([]byte("version: 1\nrepository: y-writings/source-repo\nref: main\ncommit: 0123456789abcdef0123456789abcdef01234567\nfiles:\n  - id: sample\n    target: sample.txt\n    source_sha256: old\n"))
+	_, err := LoadLockBytes([]byte("version: 1\nrepository: y-writings/source-repo\nref: main\ncommit: 0123456789abcdef0123456789abcdef01234567\nfiles:\n  - id: sample\n    target_path: sample.txt\n    source_sha256: old\n"))
 	if err == nil || !strings.Contains(err.Error(), "unknown key") {
 		t.Fatalf("expected source_sha256 to be rejected as an unknown key, got %v", err)
 	}
 
-	_, err = LoadLockBytes([]byte("version: 1\nrepository: y-writings/source-repo\nref: main\ncommit: 0123456789abcdef0123456789abcdef01234567\nfiles:\n  - id: sample\n    target: sample.txt\n    target_sha256: old\n"))
+	_, err = LoadLockBytes([]byte("version: 1\nrepository: y-writings/source-repo\nref: main\ncommit: 0123456789abcdef0123456789abcdef01234567\nfiles:\n  - id: sample\n    target_path: sample.txt\n    target_sha256: old\n"))
 	if err == nil || !strings.Contains(err.Error(), "unknown key") {
 		t.Fatalf("expected target_sha256 to be rejected as an unknown key, got %v", err)
 	}

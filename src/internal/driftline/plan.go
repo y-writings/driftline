@@ -25,7 +25,7 @@ type Plan struct {
 
 func (p Plan) NextLockItem(id string, target string) LockItem {
 	for _, item := range p.NextLock.Files {
-		if item.ID == id && item.Target == target {
+		if item.ID == id && item.TargetPath == target {
 			return item
 		}
 	}
@@ -50,9 +50,9 @@ func BuildPlan(opts PlanOptions) (Plan, error) {
 	if err != nil {
 		return Plan{}, err
 	}
-	manifestBytes, err := opts.Source.ReadFile(config.Source.Repository, commit, TargetConfigPath)
+	manifestBytes, err := opts.Source.ReadFile(config.Source.Repository, commit, SourceManifestPath)
 	if err != nil {
-		return Plan{}, fmt.Errorf("driftline.yaml not found in source repository: %w", err)
+		return Plan{}, fmt.Errorf(".driftline-source.yaml not found in source repository: %w", err)
 	}
 	manifest, err := LoadSourceManifestBytes(manifestBytes)
 	if err != nil {
@@ -92,7 +92,7 @@ func (b planBuilder) build() (Plan, error) {
 	activeTargets := map[string]struct{}{}
 	lockByIdentity := map[string]LockItem{}
 	for _, item := range b.lock.Files {
-		lockByIdentity[lockIdentity(item.ID, normalizedTargetPath(item.Target))] = item
+		lockByIdentity[lockIdentity(item.ID, normalizedTargetPath(item.TargetPath))] = item
 	}
 
 	plan := Plan{
@@ -157,7 +157,7 @@ func (b planBuilder) build() (Plan, error) {
 	}
 
 	for _, item := range b.lock.Files {
-		if _, ok := activeTargets[normalizedTargetPath(item.Target)]; ok {
+		if _, ok := activeTargets[normalizedTargetPath(item.TargetPath)]; ok {
 			continue
 		}
 		plan.NextLock.Files = append(plan.NextLock.Files, item)
@@ -172,16 +172,16 @@ func (b planBuilder) build() (Plan, error) {
 }
 
 func resolveTargetConfigFile(configured TargetConfigFile, manifestItem SourceManifestFile) resolvedFile {
-	target := configured.Target
+	target := configured.TargetPath
 	if target == "" {
-		target = manifestItem.Source
+		target = manifestItem.SourcePath
 	}
 	ifNotExists := manifestItem.IfNotExists
 	if configured.IfNotExists != nil {
 		ifNotExists = *configured.IfNotExists
 	}
 	target = normalizedTargetPath(target)
-	return resolvedFile{id: configured.ID, source: manifestItem.Source, target: target, ifNotExists: ifNotExists}
+	return resolvedFile{id: configured.ID, source: manifestItem.SourcePath, target: target, ifNotExists: ifNotExists}
 }
 
 func activeChange(file resolvedFile, sourceBytes []byte, sourceHash string, targetPath string, currentHash string, targetExists bool) Change {
@@ -209,19 +209,19 @@ func activeChange(file resolvedFile, sourceBytes []byte, sourceHash string, targ
 
 func nextActiveLockItem(file resolvedFile) LockItem {
 	return LockItem{
-		ID:     file.id,
-		Target: file.target,
+		ID:         file.id,
+		TargetPath: file.target,
 	}
 }
 
 func (b planBuilder) staleChange(item LockItem) (Change, error) {
-	targetPath, err := PathWithin(b.opts.TargetDir, item.Target, fmt.Sprintf("locked target %q", item.ID))
+	targetPath, err := PathWithin(b.opts.TargetDir, item.TargetPath, fmt.Sprintf("locked target %q", item.ID))
 	if err != nil {
 		return Change{}, err
 	}
 	change := Change{
 		ID:         item.ID,
-		Target:     item.Target,
+		Target:     item.TargetPath,
 		TargetPath: targetPath,
 		Status:     StatusPrune,
 		Reason:     "target is no longer adopted",

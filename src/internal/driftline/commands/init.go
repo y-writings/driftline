@@ -55,9 +55,9 @@ func runInit(source driftline.SourceClient, opts InitOptions, stdout io.Writer) 
 			return err
 		}
 	}
-	manifestBytes, err := source.ReadFile(opts.Repository, commit, driftline.TargetConfigPath)
+	manifestBytes, err := source.ReadFile(opts.Repository, commit, driftline.SourceManifestPath)
 	if err != nil {
-		return fmt.Errorf("driftline.yaml not found in source repository: %w", err)
+		return fmt.Errorf(".driftline-source.yaml not found in source repository: %w", err)
 	}
 	manifest, err := driftline.LoadSourceManifestBytes(manifestBytes)
 	if err != nil {
@@ -70,6 +70,6 @@ func runInit(source driftline.SourceClient, opts InitOptions, stdout io.Writer) 
 	if err := driftline.WriteTargetConfig(configPath, config); err != nil {
 		return err
 	}
-	fmt.Fprintf(stdout, "created driftline.yaml from %s@%s\n", opts.Repository, commit)
+	fmt.Fprintf(stdout, "created .driftline-target.yaml from %s@%s\n", opts.Repository, commit)
 	return nil
 }

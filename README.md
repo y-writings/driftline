@@ -10,7 +10,7 @@ go build ./src/cmd/driftline
 
 ## Source Manifest
 
-The Source Repository owns `driftline.yaml` at its repository root.
+The Source Repository owns `.driftline-source.yaml` at its repository root.
 Editors that support JSON Schema can validate it with the canonical schema.
 
 ```yaml
@@ -20,13 +20,13 @@ gitignore:
   - .cache/tool
 files:
   - id: example
-    source: templates/example.txt
+    source_path: templates/example.txt
   - id: local-config
-    source: templates/config.local
+    source_path: templates/config.local
     if_not_exists: true
 ```
 
-Source Manifest file entries do not define `target`; target paths belong to the Target Config.
+Source Manifest file entries do not define `target_path`; target paths belong to the Target Config.
 
 ## Target Config
 
@@ -36,7 +36,7 @@ Create a Target Config from a GitHub repository:
 driftline init y-writings/source-repo
 ```
 
-This creates `driftline.yaml` in the Target Repository.
+This creates `.driftline-target.yaml` in the Target Repository.
 
 ```yaml
 version: 1
@@ -49,12 +49,12 @@ files:
     if_not_exists: true
 ```
 
-When a Target Config file entry omits `target`, driftline writes to the same relative path as the Source Manifest `source` path. Add `target` only when the Target Repository wants a different destination path:
+When a Target Config file entry omits `target_path`, driftline writes to the same relative path as the Source Manifest `source_path`. Add `target_path` only when the Target Repository wants a different destination path:
 
 ```yaml
 files:
   - id: example
-    target: example.txt
+    target_path: example.txt
 ```
 
 Use `--ref` with `init` to pin the configured branch, tag, or commit-ish by name:
@@ -85,7 +85,7 @@ ref: main
 commit: 0123456789abcdef0123456789abcdef01234567
 files:
   - id: example
-    target: example.txt
+    target_path: example.txt
 ```
 
 ## GitHub Authentication

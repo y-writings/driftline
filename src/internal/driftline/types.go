@@ -8,7 +8,7 @@ type SourceManifest struct {
 
 type SourceManifestFile struct {
 	ID          string `yaml:"id"`
-	Source      string `yaml:"source"`
+	SourcePath  string `yaml:"source_path"`
 	IfNotExists bool   `yaml:"if_not_exists,omitempty"`
 }
 
@@ -25,7 +25,7 @@ type TargetSource struct {
 
 type TargetConfigFile struct {
 	ID          string `yaml:"id"`
-	Target      string `yaml:"target,omitempty"`
+	TargetPath  string `yaml:"target_path,omitempty"`
 	IfNotExists *bool  `yaml:"if_not_exists,omitempty"`
 }
 
@@ -38,8 +38,8 @@ type LockFile struct {
 }
 
 type LockItem struct {
-	ID     string `yaml:"id"`
-	Target string `yaml:"target"`
+	ID         string `yaml:"id"`
+	TargetPath string `yaml:"target_path"`
 }
 
 type Status string

@@ -145,7 +145,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, `usage: driftline <command> [options]
 
 commands:
-  init owner/repo  create driftline.yaml from a GitHub Source Repository
+  init owner/repo  create .driftline-target.yaml from a GitHub Source Repository
   check            check whether target files match the Source Repository
   diff             show diffs for files that would be added or updated
   update           copy added/updated files and refresh driftline-lock.yaml
@@ -158,7 +158,7 @@ examples:
 
 options:
   --target-dir string  target repository directory (default ".")
-  --ref string         init-only ref to preserve in driftline.yaml
+  --ref string         init-only ref to preserve in .driftline-target.yaml
 
 authentication:
   set GITHUB_TOKEN for private repositories or higher rate limits`)

@@ -41,7 +41,7 @@ func TestInitCreatesTargetConfigFromSourceManifest(t *testing.T) {
 		defaultRef:    "main",
 		defaultCommit: "0123456789abcdef0123456789abcdef01234567",
 		files: map[string][]byte{
-			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:driftline.yaml": []byte("version: 1\ngitignore:\n  - .cache/tool\nfiles:\n  - id: example\n    source: templates/example.txt\n  - id: local-config\n    source: templates/config.local\n    if_not_exists: true\n"),
+			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:.driftline-source.yaml": []byte("version: 1\ngitignore:\n  - .cache/tool\nfiles:\n  - id: example\n    source_path: templates/example.txt\n  - id: local-config\n    source_path: templates/config.local\n    if_not_exists: true\n"),
 		},
 	}
 
@@ -52,19 +52,19 @@ func TestInitCreatesTargetConfigFromSourceManifest(t *testing.T) {
 		t.Fatalf("init failed: %v\nstderr: %s", err, stderr.String())
 	}
 
-	got := readFile(t, targetDir, "driftline.yaml")
+	got := readFile(t, targetDir, ".driftline-target.yaml")
 	for _, want := range []string{"version: 1", "repository: y-writings/source-repo", "ref: main", "id: example", "id: local-config", "if_not_exists: true"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("generated config missing %q:\n%s", want, got)
 		}
 	}
-	if strings.Contains(got, "target:") {
+	if strings.Contains(got, "target_path:") {
 		t.Fatalf("target config must not copy source manifest paths as targets:\n%s", got)
 	}
 	if strings.Contains(got, "gitignore") {
 		t.Fatalf("target config must not copy gitignore:\n%s", got)
 	}
-	if !strings.Contains(stdout.String(), "created driftline.yaml from y-writings/source-repo@0123456789abcdef0123456789abcdef01234567") {
+	if !strings.Contains(stdout.String(), "created .driftline-target.yaml from y-writings/source-repo@0123456789abcdef0123456789abcdef01234567") {
 		t.Fatalf("unexpected stdout: %q", stdout.String())
 	}
 }
@@ -73,20 +73,20 @@ func TestInitRefPreservesInputRef(t *testing.T) {
 	targetDir := t.TempDir()
 	client := commandFakeSourceClient{
 		refs:  map[string]string{"y-writings/source-repo@feature/foo": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
-		files: map[string][]byte{"y-writings/source-repo@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:driftline.yaml": []byte("version: 1\nfiles: []\n")},
+		files: map[string][]byte{"y-writings/source-repo@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:.driftline-source.yaml": []byte("version: 1\nfiles: []\n")},
 	}
 	var stdout, stderr bytes.Buffer
 	runner := Runner{Source: client}
 	if err := runner.Run([]string{"init", "y-writings/source-repo", "--ref", "feature/foo", "--target-dir", targetDir}, &stdout, &stderr); err != nil {
 		t.Fatalf("init failed: %v", err)
 	}
-	if got := readFile(t, targetDir, "driftline.yaml"); !strings.Contains(got, "ref: feature/foo") {
+	if got := readFile(t, targetDir, ".driftline-target.yaml"); !strings.Contains(got, "ref: feature/foo") {
 		t.Fatalf("expected input ref to be preserved:\n%s", got)
 	}
 }
 
 func TestInitRefusesExistingConfigOrLock(t *testing.T) {
-	for name, file := range map[string]string{"config": "driftline.yaml", "lock": "driftline-lock.yaml"} {
+	for name, file := range map[string]string{"config": ".driftline-target.yaml", "lock": "driftline-lock.yaml"} {
 		t.Run(name, func(t *testing.T) {
 			targetDir := t.TempDir()
 			writeFile(t, targetDir, file, "existing\n")
@@ -147,11 +147,11 @@ func TestHelpShowsNewCommandsAndGitHubToken(t *testing.T) {
 
 func TestCheckReportsMissingLockAndUpdateCreatesIt(t *testing.T) {
 	targetDir := t.TempDir()
-	writeFile(t, targetDir, "driftline.yaml", "version: 1\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: sample\n")
+	writeFile(t, targetDir, ".driftline-target.yaml", "version: 1\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: sample\n")
 	client := commandFakeSourceClient{
 		refs: map[string]string{"y-writings/source-repo@main": "0123456789abcdef0123456789abcdef01234567"},
 		files: map[string][]byte{
-			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:driftline.yaml": []byte("version: 1\ngitignore:\n  - .cache/tool\nfiles:\n  - id: sample\n    source: sample.txt\n"),
+			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:.driftline-source.yaml": []byte("version: 1\ngitignore:\n  - .cache/tool\nfiles:\n  - id: sample\n    source_path: sample.txt\n"),
 			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:sample.txt":     []byte("hello\n"),
 		},
 	}
@@ -174,7 +174,7 @@ func TestCheckReportsMissingLockAndUpdateCreatesIt(t *testing.T) {
 		t.Fatalf("unexpected copied file: %q", got)
 	}
 	lock := readFile(t, targetDir, "driftline-lock.yaml")
-	for _, want := range []string{"version: 1", "repository: y-writings/source-repo", "ref: main", "commit: 0123456789abcdef0123456789abcdef01234567", "target: sample.txt"} {
+	for _, want := range []string{"version: 1", "repository: y-writings/source-repo", "ref: main", "commit: 0123456789abcdef0123456789abcdef01234567", "target_path: sample.txt"} {
 		if !strings.Contains(lock, want) {
 			t.Fatalf("lock missing %q:\n%s", want, lock)
 		}
@@ -190,12 +190,12 @@ func TestCheckReportsMissingLockAndUpdateCreatesIt(t *testing.T) {
 
 func TestUpdatePreservesIfNotExistsLocalEdits(t *testing.T) {
 	targetDir := t.TempDir()
-	writeFile(t, targetDir, "driftline.yaml", "version: 1\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: local-config\n")
+	writeFile(t, targetDir, ".driftline-target.yaml", "version: 1\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: local-config\n")
 	writeFile(t, targetDir, "config.local", "initial-local\n")
 	client := commandFakeSourceClient{
 		refs: map[string]string{"y-writings/source-repo@main": "0123456789abcdef0123456789abcdef01234567"},
 		files: map[string][]byte{
-			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:driftline.yaml": []byte("version: 1\nfiles:\n  - id: local-config\n    source: config.local\n    if_not_exists: true\n"),
+			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:.driftline-source.yaml": []byte("version: 1\nfiles:\n  - id: local-config\n    source_path: config.local\n    if_not_exists: true\n"),
 			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:config.local":   []byte("from-source\n"),
 		},
 	}
@@ -215,12 +215,12 @@ func TestUpdatePreservesIfNotExistsLocalEdits(t *testing.T) {
 
 func TestPruneRemovesStaleFileWithoutHashMetadata(t *testing.T) {
 	targetDir := t.TempDir()
-	writeFile(t, targetDir, "driftline.yaml", "version: 1\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles: []\n")
+	writeFile(t, targetDir, ".driftline-target.yaml", "version: 1\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles: []\n")
 	writeFile(t, targetDir, "old.txt", "changed\n")
-	writeFile(t, targetDir, "driftline-lock.yaml", "version: 1\nrepository: y-writings/source-repo\nref: main\ncommit: 0123456789abcdef0123456789abcdef01234567\nfiles:\n  - id: old\n    target: old.txt\n")
+	writeFile(t, targetDir, "driftline-lock.yaml", "version: 1\nrepository: y-writings/source-repo\nref: main\ncommit: 0123456789abcdef0123456789abcdef01234567\nfiles:\n  - id: old\n    target_path: old.txt\n")
 	client := commandFakeSourceClient{
 		refs:  map[string]string{"y-writings/source-repo@main": "0123456789abcdef0123456789abcdef01234567"},
-		files: map[string][]byte{"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:driftline.yaml": []byte("version: 1\nfiles: []\n")},
+		files: map[string][]byte{"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:.driftline-source.yaml": []byte("version: 1\nfiles: []\n")},
 	}
 	var stdout, stderr bytes.Buffer
 	if err := (Runner{Source: client}).Run([]string{"prune", "--target-dir", targetDir}, &stdout, &stderr); err != nil {
@@ -238,14 +238,14 @@ func TestPruneDoesNotAdvanceActiveLockEntries(t *testing.T) {
 	targetDir := t.TempDir()
 	oldCommit := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	newCommit := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	writeFile(t, targetDir, "driftline.yaml", "version: 1\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: sample\n")
+	writeFile(t, targetDir, ".driftline-target.yaml", "version: 1\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: sample\n")
 	writeFile(t, targetDir, "sample.txt", "old\n")
 	writeFile(t, targetDir, "old.txt", "stale\n")
-	writeFile(t, targetDir, "driftline-lock.yaml", "version: 1\nrepository: y-writings/source-repo\nref: main\ncommit: "+oldCommit+"\nfiles:\n  - id: sample\n    target: sample.txt\n  - id: old\n    target: old.txt\n")
+	writeFile(t, targetDir, "driftline-lock.yaml", "version: 1\nrepository: y-writings/source-repo\nref: main\ncommit: "+oldCommit+"\nfiles:\n  - id: sample\n    target_path: sample.txt\n  - id: old\n    target_path: old.txt\n")
 	client := commandFakeSourceClient{
 		refs: map[string]string{"y-writings/source-repo@main": newCommit},
 		files: map[string][]byte{
-			"y-writings/source-repo@" + newCommit + ":driftline.yaml": []byte("version: 1\nfiles:\n  - id: sample\n    source: sample.txt\n"),
+			"y-writings/source-repo@" + newCommit + ":.driftline-source.yaml": []byte("version: 1\nfiles:\n  - id: sample\n    source_path: sample.txt\n"),
 			"y-writings/source-repo@" + newCommit + ":sample.txt":     []byte("new\n"),
 		},
 	}
@@ -261,13 +261,13 @@ func TestPruneDoesNotAdvanceActiveLockEntries(t *testing.T) {
 	if strings.Contains(lock, newCommit) {
 		t.Fatalf("prune must not advance active lock commit:\n%s", lock)
 	}
-	if !strings.Contains(lock, "commit: "+oldCommit) || !strings.Contains(lock, "target: sample.txt") {
+	if !strings.Contains(lock, "commit: "+oldCommit) || !strings.Contains(lock, "target_path: sample.txt") {
 		t.Fatalf("prune must preserve active lock metadata:\n%s", lock)
 	}
 	if strings.Contains(lock, "source_sha256") || strings.Contains(lock, "target_sha256") {
 		t.Fatalf("lock must not store file content hashes:\n%s", lock)
 	}
-	if strings.Contains(lock, "target: old.txt") {
+	if strings.Contains(lock, "target_path: old.txt") {
 		t.Fatalf("prune must remove stale lock entry:\n%s", lock)
 	}
 }
