@@ -39,7 +39,7 @@ func printChanges(w io.Writer, changes []driftline.Change) {
 func sharedChangeIDs(changes []driftline.Change) map[string]struct{} {
 	counts := map[string]int{}
 	for _, change := range changes {
-		if change.Status == driftline.StatusSynced {
+		if change.Target == "" {
 			continue
 		}
 		counts[change.ID]++

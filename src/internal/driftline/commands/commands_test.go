@@ -160,6 +160,21 @@ func TestSortedChangesOrdersSharedIDsByTarget(t *testing.T) {
 	}
 }
 
+func TestPrintChangesShowsTargetForPartiallyDriftedFileSet(t *testing.T) {
+	changes := []driftline.Change{
+		{Status: driftline.StatusSynced, ID: "github-workflow", Target: ".github/workflows/ci.yaml"},
+		{Status: driftline.StatusUpdate, ID: "github-workflow", Target: ".github/workflows/release.yaml", Reason: "target differs from source"},
+	}
+
+	var stdout bytes.Buffer
+	printChanges(&stdout, changes)
+
+	want := "update github-workflow .github/workflows/release.yaml: target differs from source\n"
+	if stdout.String() != want {
+		t.Fatalf("unexpected change output:\ngot:  %q\nwant: %q", stdout.String(), want)
+	}
+}
+
 func TestCheckReportsMissingLockAndUpdateCreatesIt(t *testing.T) {
 	targetDir := t.TempDir()
 	writeFile(t, targetDir, ".driftline-target.yaml", "version: 1\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: github-workflow\n")
