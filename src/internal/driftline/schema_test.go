@@ -24,12 +24,16 @@ func TestSourceManifestSchemaMatchesParserAllowedKeys(t *testing.T) {
 	assertFalseValue(t, "file item additionalProperties", fileItemSchema, "additionalProperties")
 	fileProperties := propertyNames(objectValue(fileItemSchema, "properties"))
 	assertSameStringSet(t, "file properties", fileProperties, allowed["files"])
-	assertSameStringSet(t, "file required", stringArrayValue(fileItemSchema, "required"), map[string]struct{}{"id": {}, "source_path": {}})
-	if _, ok := fileProperties["source"]; ok {
-		t.Fatal("source manifest schema must not allow old file source key")
+	assertSameStringSet(t, "file required", stringArrayValue(fileItemSchema, "required"), map[string]struct{}{"id": {}, "paths": {}})
+	if _, ok := fileProperties["source_path"]; ok {
+		t.Fatal("source manifest schema must not allow old file source_path key")
 	}
 	if _, ok := fileProperties["target"]; ok {
 		t.Fatal("source manifest schema must not allow file target")
+	}
+	pathsSchema := objectValue(objectValue(fileItemSchema, "properties"), "paths")
+	if got := numberValue(pathsSchema, "minItems"); got != 1 {
+		t.Fatalf("paths must require at least one item, got %v", got)
 	}
 }
 
@@ -74,6 +78,11 @@ func objectValue(values map[string]any, key string) map[string]any {
 
 func stringValue(values map[string]any, key string) string {
 	value, _ := values[key].(string)
+	return value
+}
+
+func numberValue(values map[string]any, key string) float64 {
+	value, _ := values[key].(float64)
 	return value
 }
 

@@ -90,10 +90,6 @@ func (b planBuilder) build() (Plan, error) {
 	}
 
 	activeTargets := map[string]struct{}{}
-	lockByIdentity := map[string]LockItem{}
-	for _, item := range b.lock.Files {
-		lockByIdentity[lockIdentity(item.ID, normalizedTargetPath(item.TargetPath))] = item
-	}
 
 	plan := Plan{
 		Repository: b.config.Source.Repository,
@@ -125,15 +121,20 @@ func (b planBuilder) build() (Plan, error) {
 		if !ok {
 			return Plan{}, fmt.Errorf("unknown source file id %q", configured.ID)
 		}
-		resolved := resolveTargetConfigFile(configured, manifestItem)
-		if isReservedTargetPath(resolved.target) {
-			return Plan{}, fmt.Errorf("reserved target path %q", resolved.target)
+		resolvedForID, err := resolveTargetConfigFile(configured, manifestItem)
+		if err != nil {
+			return Plan{}, err
 		}
-		if _, ok := activeTargets[resolved.target]; ok {
-			return Plan{}, fmt.Errorf("duplicate target %q", resolved.target)
+		for _, resolved := range resolvedForID {
+			if isReservedTargetPath(resolved.target) {
+				return Plan{}, fmt.Errorf("reserved target path %q", resolved.target)
+			}
+			if _, ok := activeTargets[resolved.target]; ok {
+				return Plan{}, fmt.Errorf("duplicate target %q", resolved.target)
+			}
+			activeTargets[resolved.target] = struct{}{}
+			resolvedFiles = append(resolvedFiles, resolved)
 		}
-		activeTargets[resolved.target] = struct{}{}
-		resolvedFiles = append(resolvedFiles, resolved)
 	}
 
 	for _, resolved := range resolvedFiles {
@@ -157,7 +158,7 @@ func (b planBuilder) build() (Plan, error) {
 	}
 
 	for _, item := range b.lock.Files {
-		if _, ok := activeTargets[normalizedTargetPath(item.TargetPath)]; ok {
+		if _, ok := activeTargets[normalizedConfigPath(item.TargetPath)]; ok {
 			continue
 		}
 		plan.NextLock.Files = append(plan.NextLock.Files, item)
@@ -171,17 +172,36 @@ func (b planBuilder) build() (Plan, error) {
 	return plan, nil
 }
 
-func resolveTargetConfigFile(configured TargetConfigFile, manifestItem SourceManifestFile) resolvedFile {
-	target := configured.TargetPath
-	if target == "" {
-		target = manifestItem.SourcePath
-	}
+func resolveTargetConfigFile(configured TargetConfigFile, manifestItem SourceManifestFile) ([]resolvedFile, error) {
 	ifNotExists := manifestItem.IfNotExists
 	if configured.IfNotExists != nil {
 		ifNotExists = *configured.IfNotExists
 	}
-	target = normalizedTargetPath(target)
-	return resolvedFile{id: configured.ID, source: manifestItem.SourcePath, target: target, ifNotExists: ifNotExists}
+
+	sourcePaths := map[string]struct{}{}
+	for _, sourcePath := range manifestItem.Paths {
+		sourcePaths[normalizedConfigPath(sourcePath)] = struct{}{}
+	}
+
+	overrides := map[string]string{}
+	for _, override := range configured.PathOverrides {
+		from := normalizedConfigPath(override.From)
+		if _, ok := sourcePaths[from]; !ok {
+			return nil, fmt.Errorf("target config file id %q path override from %q does not match a source path", configured.ID, override.From)
+		}
+		overrides[from] = normalizedConfigPath(override.To)
+	}
+
+	resolved := make([]resolvedFile, 0, len(manifestItem.Paths))
+	for _, sourcePath := range manifestItem.Paths {
+		source := normalizedConfigPath(sourcePath)
+		target := source
+		if overrideTarget, ok := overrides[source]; ok {
+			target = overrideTarget
+		}
+		resolved = append(resolved, resolvedFile{id: configured.ID, source: source, target: target, ifNotExists: ifNotExists})
+	}
+	return resolved, nil
 }
 
 func activeChange(file resolvedFile, sourceBytes []byte, sourceHash string, targetPath string, currentHash string, targetExists bool) Change {
@@ -229,17 +249,13 @@ func (b planBuilder) staleChange(item LockItem) (Change, error) {
 	return change, nil
 }
 
-func lockIdentity(id string, target string) string {
-	return id + "\x00" + target
-}
-
 func isReservedTargetPath(target string) bool {
-	target = normalizedTargetPath(target)
+	target = normalizedConfigPath(target)
 	return target == TargetConfigPath || target == LockFilePath
 }
 
-func normalizedTargetPath(target string) string {
-	return filepath.ToSlash(filepath.Clean(target))
+func normalizedConfigPath(path string) string {
+	return filepath.ToSlash(filepath.Clean(path))
 }
 
 func HasDrift(changes []Change) bool {

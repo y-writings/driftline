@@ -7,9 +7,9 @@ type SourceManifest struct {
 }
 
 type SourceManifestFile struct {
-	ID          string `yaml:"id"`
-	SourcePath  string `yaml:"source_path"`
-	IfNotExists bool   `yaml:"if_not_exists,omitempty"`
+	ID          string   `yaml:"id"`
+	Paths       []string `yaml:"paths"`
+	IfNotExists bool     `yaml:"if_not_exists,omitempty"`
 }
 
 type TargetConfig struct {
@@ -24,9 +24,14 @@ type TargetSource struct {
 }
 
 type TargetConfigFile struct {
-	ID          string `yaml:"id"`
-	TargetPath  string `yaml:"target_path,omitempty"`
-	IfNotExists *bool  `yaml:"if_not_exists,omitempty"`
+	ID            string         `yaml:"id"`
+	PathOverrides []PathOverride `yaml:"path_overrides,omitempty"`
+	IfNotExists   *bool          `yaml:"if_not_exists,omitempty"`
+}
+
+type PathOverride struct {
+	From string `yaml:"from"`
+	To   string `yaml:"to"`
 }
 
 type LockFile struct {

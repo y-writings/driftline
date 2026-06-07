@@ -73,11 +73,13 @@ func TargetConfigFromSourceManifest(repository string, ref string, manifest Sour
 	}
 	seenDefaultTargets := map[string]struct{}{}
 	for _, item := range manifest.Files {
-		defaultTarget := normalizedTargetPath(item.SourcePath)
-		if _, ok := seenDefaultTargets[defaultTarget]; ok {
-			return TargetConfig{}, fmt.Errorf("duplicate target %q", defaultTarget)
+		for _, sourcePath := range item.Paths {
+			defaultTarget := normalizedConfigPath(sourcePath)
+			if _, ok := seenDefaultTargets[defaultTarget]; ok {
+				return TargetConfig{}, fmt.Errorf("duplicate target %q", defaultTarget)
+			}
+			seenDefaultTargets[defaultTarget] = struct{}{}
 		}
-		seenDefaultTargets[defaultTarget] = struct{}{}
 		file := TargetConfigFile{ID: item.ID}
 		if item.IfNotExists {
 			v := true
@@ -126,15 +128,16 @@ func WriteLock(path string, lock LockFile) error {
 func allowedSourceManifestKeys() map[string]map[string]struct{} {
 	return map[string]map[string]struct{}{
 		"":      set("version", "gitignore", "files"),
-		"files": set("id", "source_path", "if_not_exists"),
+		"files": set("id", "paths", "if_not_exists"),
 	}
 }
 
 func allowedTargetConfigKeys() map[string]map[string]struct{} {
 	return map[string]map[string]struct{}{
-		"":       set("version", "source", "files"),
-		"source": set("repository", "ref"),
-		"files":  set("id", "target_path", "if_not_exists"),
+		"":               set("version", "source", "files"),
+		"source":         set("repository", "ref"),
+		"files":          set("id", "path_overrides", "if_not_exists"),
+		"path_overrides": set("from", "to"),
 	}
 }
 
@@ -244,17 +247,28 @@ func validateSourceManifest(manifest SourceManifest, root *yaml.Node) error {
 	if err := requireSequence(root, "files", "source manifest"); err != nil {
 		return err
 	}
-	seen := map[string]struct{}{}
+	seenIDs := map[string]struct{}{}
 	for _, item := range manifest.Files {
 		if strings.TrimSpace(item.ID) == "" {
 			return errors.New("source manifest contains file without id")
 		}
-		if _, ok := seen[item.ID]; ok {
+		if _, ok := seenIDs[item.ID]; ok {
 			return fmt.Errorf("duplicate source manifest file id %q", item.ID)
 		}
-		seen[item.ID] = struct{}{}
-		if err := ValidateConfigPath(item.SourcePath, fmt.Sprintf("source %q", item.ID)); err != nil {
-			return err
+		seenIDs[item.ID] = struct{}{}
+		if len(item.Paths) == 0 {
+			return fmt.Errorf("source manifest file %q must define paths", item.ID)
+		}
+		seenPaths := map[string]struct{}{}
+		for _, sourcePath := range item.Paths {
+			if err := ValidateConfigPath(sourcePath, fmt.Sprintf("source %q", item.ID)); err != nil {
+				return err
+			}
+			normalized := normalizedConfigPath(sourcePath)
+			if _, ok := seenPaths[normalized]; ok {
+				return fmt.Errorf("duplicate source path %q in source manifest file id %q", normalized, item.ID)
+			}
+			seenPaths[normalized] = struct{}{}
 		}
 	}
 	return nil
@@ -277,7 +291,8 @@ func validateTargetConfig(config TargetConfig, root *yaml.Node) error {
 		return err
 	}
 	seen := map[string]struct{}{}
-	for _, item := range config.Files {
+	fileNodes := configSequenceItems(root, "files")
+	for i, item := range config.Files {
 		if strings.TrimSpace(item.ID) == "" {
 			return errors.New("target config contains file without id")
 		}
@@ -285,10 +300,22 @@ func validateTargetConfig(config TargetConfig, root *yaml.Node) error {
 			return fmt.Errorf("duplicate target config file id %q", item.ID)
 		}
 		seen[item.ID] = struct{}{}
-		if item.TargetPath != "" {
-			if err := ValidateConfigPath(item.TargetPath, fmt.Sprintf("target %q", item.ID)); err != nil {
+		if i < len(fileNodes) && mappingHasKey(fileNodes[i], "path_overrides") && len(item.PathOverrides) == 0 {
+			return fmt.Errorf("target config file %q path_overrides must not be empty", item.ID)
+		}
+		seenFrom := map[string]struct{}{}
+		for _, override := range item.PathOverrides {
+			if err := ValidateConfigPath(override.From, fmt.Sprintf("target %q override from", item.ID)); err != nil {
 				return err
 			}
+			if err := ValidateConfigPath(override.To, fmt.Sprintf("target %q override to", item.ID)); err != nil {
+				return err
+			}
+			from := normalizedConfigPath(override.From)
+			if _, ok := seenFrom[from]; ok {
+				return fmt.Errorf("duplicate path override from %q in target config file id %q", from, item.ID)
+			}
+			seenFrom[from] = struct{}{}
 		}
 	}
 	return nil
@@ -352,6 +379,26 @@ func requireSequence(root *yaml.Node, key string, label string) error {
 		return fmt.Errorf("%s %s must be a sequence", label, key)
 	}
 	return nil
+}
+
+func configSequenceItems(root *yaml.Node, key string) []*yaml.Node {
+	node := configMappingValue(root, key)
+	if node == nil || node.Kind != yaml.SequenceNode {
+		return nil
+	}
+	return node.Content
+}
+
+func mappingHasKey(node *yaml.Node, key string) bool {
+	if node == nil || node.Kind != yaml.MappingNode {
+		return false
+	}
+	for i := 0; i < len(node.Content)-1; i += 2 {
+		if node.Content[i].Value == key {
+			return true
+		}
+	}
+	return false
 }
 
 func configMappingValue(node *yaml.Node, key string) *yaml.Node {
