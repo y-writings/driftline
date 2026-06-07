@@ -4,6 +4,26 @@
 
 ## Install
 
+Run with Nix:
+
+```sh
+nix run github:y-writings/driftline
+```
+
+Build with Nix:
+
+```sh
+nix build github:y-writings/driftline#driftline
+```
+
+Install into a Nix profile:
+
+```sh
+nix profile install github:y-writings/driftline#driftline
+```
+
+Build from source with Go:
+
 ```sh
 go build ./src/cmd/driftline
 ```
