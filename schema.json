@@ -30,20 +30,24 @@
     "file": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "source_path"],
+      "required": ["id", "paths"],
       "properties": {
         "id": {
-          "description": "Stable file identifier used by Target Config entries.",
+          "description": "Stable adoption unit identifier used by Target Config entries.",
           "type": "string",
           "minLength": 1,
           "pattern": "\\S"
         },
-        "source_path": {
-          "description": "Relative path to the file in the Source Repository.",
-          "$ref": "#/$defs/relativePath"
+        "paths": {
+          "description": "Relative source repository paths included in this adoption unit.",
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/relativePath"
+          }
         },
         "if_not_exists": {
-          "description": "When true, driftline does not overwrite an existing target file.",
+          "description": "When true, driftline does not overwrite existing target files in this adoption unit.",
           "type": "boolean"
         }
       }

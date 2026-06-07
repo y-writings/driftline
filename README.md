@@ -19,14 +19,17 @@ version: 1
 gitignore:
   - .cache/tool
 files:
-  - id: example
-    source_path: templates/example.txt
+  - id: github-workflow
+    paths:
+      - .github/workflows/ci.yaml
+      - .github/workflows/release.yaml
   - id: local-config
-    source_path: templates/config.local
+    paths:
+      - templates/config.local
     if_not_exists: true
 ```
 
-Source Manifest file entries do not define `target_path`; target paths belong to the Target Config.
+Source Manifest file entries define adoption units. Each `id` can expose one or more source-side `paths`; target paths belong to the Target Config.
 
 ## Target Config
 
@@ -44,17 +47,19 @@ source:
   repository: y-writings/source-repo
   ref: main
 files:
-  - id: example
+  - id: github-workflow
   - id: local-config
     if_not_exists: true
 ```
 
-When a Target Config file entry omits `target_path`, driftline writes to the same relative path as the Source Manifest `source_path`. Add `target_path` only when the Target Repository wants a different destination path:
+When a Target Config file entry has no `path_overrides`, driftline writes each source path to the same relative path in the Target Repository. Add `path_overrides` only for source paths that need a different target-side path:
 
 ```yaml
 files:
-  - id: example
-    target_path: example.txt
+  - id: github-workflow
+    path_overrides:
+      - from: .github/workflows/ci.yaml
+        to: .github/workflows/project-ci.yaml
 ```
 
 Use `--ref` with `init` to pin the configured branch, tag, or commit-ish by name:
@@ -84,8 +89,10 @@ repository: y-writings/source-repo
 ref: main
 commit: 0123456789abcdef0123456789abcdef01234567
 files:
-  - id: example
-    target_path: example.txt
+  - id: github-workflow
+    target_path: .github/workflows/project-ci.yaml
+  - id: github-workflow
+    target_path: .github/workflows/release.yaml
 ```
 
 ## GitHub Authentication
