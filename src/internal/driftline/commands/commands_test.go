@@ -181,6 +181,11 @@ func TestCheckReportsMissingLockAndUpdateCreatesIt(t *testing.T) {
 	if !strings.Contains(stdout.String(), "update lock: lock file is missing") || strings.Count(stdout.String(), "add github-workflow") != 2 {
 		t.Fatalf("unexpected check output: %q", stdout.String())
 	}
+	for _, want := range []string{"add github-workflow .github/workflows/ci.yaml: target file is missing", "add github-workflow .github/workflows/release.yaml: target file is missing"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("check output missing %q: %q", want, stdout.String())
+		}
+	}
 
 	stdout.Reset()
 	if err := runner.Run([]string{"update", "--target-dir", targetDir}, &stdout, &stderr); err != nil {
