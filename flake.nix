@@ -41,6 +41,13 @@
 
             vendorHash = "sha256-g+yaVIx4jxpAQ/+WrGKxhVeliYx7nLQe/zsGpxV4Fn4=";
 
+            nativeBuildInputs = [ pkgs.makeWrapper ];
+
+            postFixup = ''
+              wrapProgram $out/bin/driftline \
+                --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.git ]}
+            '';
+
             ldflags = [
               "-s"
               "-w"

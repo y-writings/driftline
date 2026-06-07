@@ -10,7 +10,7 @@ Allow external Nix users to build, run, and install `driftline` directly from th
 
 ## Approach
 
-Add a root `flake.nix` that imports nixpkgs and builds the CLI with `buildGoModule`. Filter the package source to `go.mod`, `go.sum`, and `src/` so local Nix result symlinks and documentation edits do not affect the Go build. Publish the package as both `packages.${system}.driftline` and `packages.${system}.default`, then publish matching app outputs so `nix run github:y-writings/driftline` works without an explicit package name.
+Add a root `flake.nix` that imports nixpkgs and builds the CLI with `buildGoModule`. Filter the package source to `go.mod`, `go.sum`, and `src/` so local Nix result symlinks and documentation edits do not affect the Go build. Wrap the installed binary so runtime calls to `git diff --no-index` can find nixpkgs `git` even when the user's profile does not provide `git`. Publish the package as both `packages.${system}.driftline` and `packages.${system}.default`, then publish matching app outputs so `nix run github:y-writings/driftline` works without an explicit package name.
 
 The flake supports the common Linux and Darwin systems: `x86_64-linux`, `aarch64-linux`, `x86_64-darwin`, and `aarch64-darwin`.
 
