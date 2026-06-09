@@ -46,10 +46,16 @@ files:
   - id: local-config
     paths:
       - templates/config.local
-    if_not_exists: true
 ```
 
 Source Manifest file entries define adoption units. Each `id` can expose one or more source-side `paths`; target paths belong to the Target Config.
+
+Allowed Source Manifest properties:
+
+| Section | Properties |
+| --- | --- |
+| root | `version`, `gitignore`, `files` |
+| `files[]` | `id`, `paths` |
 
 ## Target Config
 
@@ -62,6 +68,7 @@ driftline init y-writings/source-repo
 This creates `.driftline-target.yaml` in the Target Repository.
 
 ```yaml
+# yaml-language-server: $schema=https://raw.githubusercontent.com/y-writings/driftline/main/target-schema.json
 version: 1
 source:
   repository: y-writings/source-repo
@@ -71,6 +78,15 @@ files:
   - id: local-config
     if_not_exists: true
 ```
+
+Allowed Target Config properties:
+
+| Section | Properties |
+| --- | --- |
+| root | `version`, `source`, `files` |
+| `source` | `repository`, `ref` |
+| `files[]` | `id`, `path_overrides`, `if_not_exists` |
+| `path_overrides[]` | `from`, `to` |
 
 When a Target Config file entry has no `path_overrides`, driftline writes each source path to the same relative path in the Target Repository. Add `path_overrides` only for source paths that need a different target-side path:
 

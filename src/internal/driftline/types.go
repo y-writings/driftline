@@ -7,9 +7,8 @@ type SourceManifest struct {
 }
 
 type SourceManifestFile struct {
-	ID          string   `yaml:"id"`
-	Paths       []string `yaml:"paths"`
-	IfNotExists bool     `yaml:"if_not_exists,omitempty"`
+	ID    string   `yaml:"id"`
+	Paths []string `yaml:"paths"`
 }
 
 type TargetConfig struct {
@@ -26,7 +25,7 @@ type TargetSource struct {
 type TargetConfigFile struct {
 	ID            string         `yaml:"id"`
 	PathOverrides []PathOverride `yaml:"path_overrides,omitempty"`
-	IfNotExists   *bool          `yaml:"if_not_exists,omitempty"`
+	IfNotExists   bool           `yaml:"if_not_exists,omitempty"`
 }
 
 type PathOverride struct {

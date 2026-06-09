@@ -45,10 +45,6 @@
           "items": {
             "$ref": "#/$defs/relativePath"
           }
-        },
-        "if_not_exists": {
-          "description": "When true, driftline does not overwrite existing target files in this adoption unit.",
-          "type": "boolean"
         }
       }
     },

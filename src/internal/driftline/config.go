@@ -80,12 +80,7 @@ func TargetConfigFromSourceManifest(repository string, ref string, manifest Sour
 			}
 			seenDefaultTargets[defaultTarget] = struct{}{}
 		}
-		file := TargetConfigFile{ID: item.ID}
-		if item.IfNotExists {
-			v := true
-			file.IfNotExists = &v
-		}
-		config.Files = append(config.Files, file)
+		config.Files = append(config.Files, TargetConfigFile{ID: item.ID})
 	}
 	return config, nil
 }
@@ -128,7 +123,7 @@ func WriteLock(path string, lock LockFile) error {
 func allowedSourceManifestKeys() map[string]map[string]struct{} {
 	return map[string]map[string]struct{}{
 		"":      set("version", "gitignore", "files"),
-		"files": set("id", "paths", "if_not_exists"),
+		"files": set("id", "paths"),
 	}
 }
 
