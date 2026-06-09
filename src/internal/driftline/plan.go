@@ -173,10 +173,7 @@ func (b planBuilder) build() (Plan, error) {
 }
 
 func resolveTargetConfigFile(configured TargetConfigFile, manifestItem SourceManifestFile) ([]resolvedFile, error) {
-	ifNotExists := manifestItem.IfNotExists
-	if configured.IfNotExists != nil {
-		ifNotExists = *configured.IfNotExists
-	}
+	ifNotExists := configured.IfNotExists
 
 	sourcePaths := map[string]struct{}{}
 	for _, sourcePath := range manifestItem.Paths {

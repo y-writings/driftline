@@ -59,14 +59,14 @@ func TestBuildPlanDetectsMissingLockAndAdd(t *testing.T) {
 
 func TestBuildPlanPreservesIfNotExistsTargetWithoutHashMetadata(t *testing.T) {
 	targetDir := t.TempDir()
-	writePlanFile(t, targetDir, ".driftline-target.yaml", "version: 1\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: local-config\n    path_overrides:\n      - from: templates/config.local\n        to: config.local\n")
+	writePlanFile(t, targetDir, ".driftline-target.yaml", "version: 1\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: local-config\n    path_overrides:\n      - from: templates/config.local\n        to: config.local\n    if_not_exists: true\n")
 	writePlanFile(t, targetDir, "config.local", "edited-local\n")
 	writePlanFile(t, targetDir, "driftline-lock.yaml", "version: 1\nrepository: y-writings/source-repo\nref: main\ncommit: oldoldoldoldoldoldoldoldoldoldoldoldoldoldoldold\nfiles:\n  - id: local-config\n    target_path: config.local\n")
 
 	client := fakeSourceClient{
 		refs: map[string]string{"y-writings/source-repo@main": "0123456789abcdef0123456789abcdef01234567"},
 		files: map[string][]byte{
-			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:.driftline-source.yaml": []byte("version: 1\nfiles:\n  - id: local-config\n    paths:\n      - templates/config.local\n    if_not_exists: true\n"),
+			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:.driftline-source.yaml": []byte("version: 1\nfiles:\n  - id: local-config\n    paths:\n      - templates/config.local\n"),
 			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:templates/config.local": []byte("from-source\n"),
 		},
 	}

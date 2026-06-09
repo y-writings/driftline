@@ -6,7 +6,7 @@ import (
 )
 
 func TestLoadSourceManifestStrictValidation(t *testing.T) {
-	manifest, err := LoadSourceManifestBytes([]byte("version: 1\ngitignore:\n  - ' .cache/tool '\n  - ''\nfiles:\n  - id: example\n    paths:\n      - templates/example.txt\n      - templates/example-extra.txt\n  - id: local-config\n    paths:\n      - templates/config.local\n    if_not_exists: true\n"))
+	manifest, err := LoadSourceManifestBytes([]byte("version: 1\ngitignore:\n  - ' .cache/tool '\n  - ''\nfiles:\n  - id: example\n    paths:\n      - templates/example.txt\n      - templates/example-extra.txt\n  - id: local-config\n    paths:\n      - templates/config.local\n"))
 	if err != nil {
 		t.Fatalf("load source manifest failed: %v", err)
 	}
@@ -16,9 +16,6 @@ func TestLoadSourceManifestStrictValidation(t *testing.T) {
 	if len(manifest.Files[0].Paths) != 2 || manifest.Files[0].Paths[0] != "templates/example.txt" || manifest.Files[0].Paths[1] != "templates/example-extra.txt" {
 		t.Fatalf("unexpected source paths: %#v", manifest.Files[0])
 	}
-	if !manifest.Files[1].IfNotExists {
-		t.Fatalf("expected if_not_exists true")
-	}
 	if len(manifest.GitIgnore) != 2 {
 		t.Fatalf("gitignore entries should be preserved before write-time trimming: %#v", manifest.GitIgnore)
 	}
@@ -26,11 +23,12 @@ func TestLoadSourceManifestStrictValidation(t *testing.T) {
 
 func TestLoadSourceManifestRejectsUnknownAndDuplicateKeys(t *testing.T) {
 	for name, input := range map[string]string{
-		"unknown root":    "version: 1\nextra: true\nfiles: []\n",
-		"duplicate root":  "version: 1\nversion: 1\nfiles: []\n",
-		"unknown file":    "version: 1\nfiles:\n  - id: sample\n    paths:\n      - sample.txt\n    extra: true\n",
-		"old source path": "version: 1\nfiles:\n  - id: sample\n    source_path: sample.txt\n",
-		"target file":     "version: 1\nfiles:\n  - id: sample\n    paths:\n      - sample.txt\n    target: sample.txt\n",
+		"unknown root":         "version: 1\nextra: true\nfiles: []\n",
+		"duplicate root":       "version: 1\nversion: 1\nfiles: []\n",
+		"unknown file":         "version: 1\nfiles:\n  - id: sample\n    paths:\n      - sample.txt\n    extra: true\n",
+		"old source path":      "version: 1\nfiles:\n  - id: sample\n    source_path: sample.txt\n",
+		"target file":          "version: 1\nfiles:\n  - id: sample\n    paths:\n      - sample.txt\n    target: sample.txt\n",
+		"source if_not_exists": "version: 1\nfiles:\n  - id: sample\n    paths:\n      - sample.txt\n    if_not_exists: true\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := LoadSourceManifestBytes([]byte(input))
@@ -58,19 +56,22 @@ func TestLoadSourceManifestRejectsInvalidPaths(t *testing.T) {
 	}
 }
 
-func TestLoadTargetConfigDecodesPathOverridesAndExplicitFalse(t *testing.T) {
-	config, err := LoadTargetConfigBytes([]byte("version: 1\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: inherited\n  - id: explicit\n    path_overrides:\n      - from: source.txt\n        to: custom.txt\n    if_not_exists: false\n"))
+func TestLoadTargetConfigDecodesPathOverridesAndIfNotExists(t *testing.T) {
+	config, err := LoadTargetConfigBytes([]byte("version: 1\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: inherited\n  - id: explicit\n    path_overrides:\n      - from: source.txt\n        to: custom.txt\n    if_not_exists: true\n  - id: explicit-false\n    if_not_exists: false\n"))
 	if err != nil {
 		t.Fatalf("load target config failed: %v", err)
 	}
-	if config.Files[0].IfNotExists != nil {
-		t.Fatalf("expected omitted if_not_exists to stay nil")
+	if config.Files[0].IfNotExists {
+		t.Fatalf("expected omitted if_not_exists to default false")
 	}
 	if len(config.Files[1].PathOverrides) != 1 || config.Files[1].PathOverrides[0].From != "source.txt" || config.Files[1].PathOverrides[0].To != "custom.txt" {
 		t.Fatalf("expected path_overrides to decode, got %#v", config.Files[1])
 	}
-	if config.Files[1].IfNotExists == nil || *config.Files[1].IfNotExists {
-		t.Fatalf("expected explicit false override, got %#v", config.Files[1].IfNotExists)
+	if !config.Files[1].IfNotExists {
+		t.Fatalf("expected explicit true, got %#v", config.Files[1])
+	}
+	if config.Files[2].IfNotExists {
+		t.Fatalf("expected explicit false, got %#v", config.Files[2])
 	}
 }
 
