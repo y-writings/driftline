@@ -9,7 +9,7 @@
   "properties": {
     "version": {
       "description": "Target config schema version.",
-      "const": 1
+      "const": 2
     },
     "source": {
       "description": "Source Repository to adopt files from.",
@@ -53,31 +53,20 @@
           "pattern": "\\S"
         },
         "path_overrides": {
-          "description": "Per-source-path target path overrides for this adoption unit.",
-          "type": "array",
-          "minItems": 1,
-          "items": {
-            "$ref": "#/$defs/pathOverride"
+          "description": "Per-source-file target path overrides for this adoption unit, keyed by Source Manifest file identifier.",
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": {
+            "type": "string",
+            "pattern": "\\S"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/relativePath"
           }
         },
         "if_not_exists": {
           "description": "When true, driftline does not overwrite existing target files in this adoption unit.",
           "type": "boolean"
-        }
-      }
-    },
-    "pathOverride": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["from", "to"],
-      "properties": {
-        "from": {
-          "description": "Source path from the adopted Source Manifest paths list.",
-          "$ref": "#/$defs/relativePath"
-        },
-        "to": {
-          "description": "Target repository path to write that source path to.",
-          "$ref": "#/$defs/relativePath"
         }
       }
     },

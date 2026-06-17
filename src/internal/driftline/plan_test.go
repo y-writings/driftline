@@ -36,12 +36,12 @@ func (f fakeSourceClient) ReadFile(repository string, commit string, path string
 
 func TestBuildPlanDetectsMissingLockAndAdd(t *testing.T) {
 	targetDir := t.TempDir()
-	writePlanFile(t, targetDir, ".driftline-target.yaml", "version: 1\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: sample\n")
+	writePlanFile(t, targetDir, ".driftline-target.yaml", "version: 2\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: sample\n")
 
 	client := fakeSourceClient{
 		refs: map[string]string{"y-writings/source-repo@main": "0123456789abcdef0123456789abcdef01234567"},
 		files: map[string][]byte{
-			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:.driftline-source.yaml": []byte("version: 1\nfiles:\n  - id: sample\n    paths:\n      - sample.txt\n"),
+			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:.driftline-source.yaml": []byte("version: 2\nfiles:\n  - id: sample\n    paths:\n      sample:\n        path: sample.txt\n"),
 			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:sample.txt":             []byte("hello\n"),
 		},
 	}
@@ -59,14 +59,14 @@ func TestBuildPlanDetectsMissingLockAndAdd(t *testing.T) {
 
 func TestBuildPlanPreservesIfNotExistsTargetWithoutHashMetadata(t *testing.T) {
 	targetDir := t.TempDir()
-	writePlanFile(t, targetDir, ".driftline-target.yaml", "version: 1\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: local-config\n    path_overrides:\n      - from: templates/config.local\n        to: config.local\n    if_not_exists: true\n")
+	writePlanFile(t, targetDir, ".driftline-target.yaml", "version: 2\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: local-config\n    path_overrides:\n      config: config.local\n    if_not_exists: true\n")
 	writePlanFile(t, targetDir, "config.local", "edited-local\n")
 	writePlanFile(t, targetDir, "driftline-lock.yaml", "version: 1\nrepository: y-writings/source-repo\nref: main\ncommit: oldoldoldoldoldoldoldoldoldoldoldoldoldoldoldold\nfiles:\n  - id: local-config\n    target_path: config.local\n")
 
 	client := fakeSourceClient{
 		refs: map[string]string{"y-writings/source-repo@main": "0123456789abcdef0123456789abcdef01234567"},
 		files: map[string][]byte{
-			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:.driftline-source.yaml": []byte("version: 1\nfiles:\n  - id: local-config\n    paths:\n      - templates/config.local\n"),
+			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:.driftline-source.yaml": []byte("version: 2\nfiles:\n  - id: local-config\n    paths:\n      config:\n        path: templates/config.local\n"),
 			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:templates/config.local": []byte("from-source\n"),
 		},
 	}
@@ -84,14 +84,14 @@ func TestBuildPlanPreservesIfNotExistsTargetWithoutHashMetadata(t *testing.T) {
 
 func TestBuildPlanReportsManagedTargetEditAsDriftWithoutHashMetadata(t *testing.T) {
 	targetDir := t.TempDir()
-	writePlanFile(t, targetDir, ".driftline-target.yaml", "version: 1\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: sample\n")
+	writePlanFile(t, targetDir, ".driftline-target.yaml", "version: 2\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: sample\n")
 	writePlanFile(t, targetDir, "sample.txt", "edited-local\n")
 	writePlanFile(t, targetDir, "driftline-lock.yaml", "version: 1\nrepository: y-writings/source-repo\nref: main\ncommit: 0123456789abcdef0123456789abcdef01234567\nfiles:\n  - id: sample\n    target_path: sample.txt\n")
 
 	client := fakeSourceClient{
 		refs: map[string]string{"y-writings/source-repo@main": "0123456789abcdef0123456789abcdef01234567"},
 		files: map[string][]byte{
-			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:.driftline-source.yaml": []byte("version: 1\nfiles:\n  - id: sample\n    paths:\n      - sample.txt\n"),
+			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:.driftline-source.yaml": []byte("version: 2\nfiles:\n  - id: sample\n    paths:\n      sample:\n        path: sample.txt\n"),
 			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:sample.txt":             []byte("from-source\n"),
 		},
 	}
@@ -109,14 +109,14 @@ func TestBuildPlanReportsManagedTargetEditAsDriftWithoutHashMetadata(t *testing.
 
 func TestBuildPlanLeavesOldTargetAsPruneCandidateWhenDefaultSourcePathChanges(t *testing.T) {
 	targetDir := t.TempDir()
-	writePlanFile(t, targetDir, ".driftline-target.yaml", "version: 1\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: sample\n")
+	writePlanFile(t, targetDir, ".driftline-target.yaml", "version: 2\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: sample\n")
 	writePlanFile(t, targetDir, "old.txt", "old\n")
 	writePlanFile(t, targetDir, "driftline-lock.yaml", "version: 1\nrepository: y-writings/source-repo\nref: main\ncommit: oldoldoldoldoldoldoldoldoldoldoldoldoldoldoldold\nfiles:\n  - id: sample\n    target_path: old.txt\n")
 
 	client := fakeSourceClient{
 		refs: map[string]string{"y-writings/source-repo@main": "0123456789abcdef0123456789abcdef01234567"},
 		files: map[string][]byte{
-			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:.driftline-source.yaml": []byte("version: 1\nfiles:\n  - id: sample\n    paths:\n      - new.txt\n"),
+			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:.driftline-source.yaml": []byte("version: 2\nfiles:\n  - id: sample\n    paths:\n      sample:\n        path: new.txt\n"),
 			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:new.txt":                []byte("new\n"),
 		},
 	}
@@ -131,12 +131,12 @@ func TestBuildPlanLeavesOldTargetAsPruneCandidateWhenDefaultSourcePathChanges(t 
 
 func TestBuildPlanExpandsFileSetToMultipleDefaultTargets(t *testing.T) {
 	targetDir := t.TempDir()
-	writePlanFile(t, targetDir, ".driftline-target.yaml", "version: 1\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: github-workflow\n")
+	writePlanFile(t, targetDir, ".driftline-target.yaml", "version: 2\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: github-workflow\n")
 
 	client := fakeSourceClient{
 		refs: map[string]string{"y-writings/source-repo@main": "0123456789abcdef0123456789abcdef01234567"},
 		files: map[string][]byte{
-			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:.driftline-source.yaml":      []byte("version: 1\nfiles:\n  - id: github-workflow\n    paths:\n      - .github/workflows/ci.yaml\n      - .github/workflows/release.yaml\n"),
+			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:.driftline-source.yaml":         []byte("version: 2\nfiles:\n  - id: github-workflow\n    paths:\n      ci:\n        name: CI workflow\n        path: .github/workflows/ci.yaml\n      release:\n        name: Release workflow\n        path: .github/workflows/release.yaml\n"),
 			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:.github/workflows/ci.yaml":      []byte("ci\n"),
 			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:.github/workflows/release.yaml": []byte("release\n"),
 		},
@@ -160,12 +160,12 @@ func TestBuildPlanExpandsFileSetToMultipleDefaultTargets(t *testing.T) {
 
 func TestBuildPlanAppliesPathOverridesInsideFileSet(t *testing.T) {
 	targetDir := t.TempDir()
-	writePlanFile(t, targetDir, ".driftline-target.yaml", "version: 1\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: github-workflow\n    path_overrides:\n      - from: .github/workflows/ci.yaml\n        to: .github/workflows/project-ci.yaml\n")
+	writePlanFile(t, targetDir, ".driftline-target.yaml", "version: 2\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: github-workflow\n    path_overrides:\n      ci: .github/workflows/project-ci.yaml\n")
 
 	client := fakeSourceClient{
 		refs: map[string]string{"y-writings/source-repo@main": "0123456789abcdef0123456789abcdef01234567"},
 		files: map[string][]byte{
-			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:.driftline-source.yaml":      []byte("version: 1\nfiles:\n  - id: github-workflow\n    paths:\n      - .github/workflows/ci.yaml\n      - .github/workflows/release.yaml\n"),
+			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:.driftline-source.yaml":         []byte("version: 2\nfiles:\n  - id: github-workflow\n    paths:\n      ci:\n        path: .github/workflows/ci.yaml\n      release:\n        path: .github/workflows/release.yaml\n"),
 			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:.github/workflows/ci.yaml":      []byte("ci\n"),
 			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:.github/workflows/release.yaml": []byte("release\n"),
 		},
@@ -185,24 +185,24 @@ func TestBuildPlanAppliesPathOverridesInsideFileSet(t *testing.T) {
 
 func TestBuildPlanRejectsUnknownPathOverrideSource(t *testing.T) {
 	targetDir := t.TempDir()
-	writePlanFile(t, targetDir, ".driftline-target.yaml", "version: 1\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: sample\n    path_overrides:\n      - from: missing.txt\n        to: custom.txt\n")
+	writePlanFile(t, targetDir, ".driftline-target.yaml", "version: 2\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: sample\n    path_overrides:\n      missing: custom.txt\n")
 	client := fakeSourceClient{
 		refs:  map[string]string{"y-writings/source-repo@main": "0123456789abcdef0123456789abcdef01234567"},
-		files: map[string][]byte{"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:.driftline-source.yaml": []byte("version: 1\nfiles:\n  - id: sample\n    paths:\n      - sample.txt\n")},
+		files: map[string][]byte{"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:.driftline-source.yaml": []byte("version: 2\nfiles:\n  - id: sample\n    paths:\n      sample:\n        path: sample.txt\n")},
 	}
 	_, err := BuildPlan(PlanOptions{TargetDir: targetDir, Source: client})
-	if err == nil || !strings.Contains(err.Error(), "path override") || !strings.Contains(err.Error(), "missing.txt") {
+	if err == nil || !strings.Contains(err.Error(), "path override") || !strings.Contains(err.Error(), "missing") {
 		t.Fatalf("expected unknown path override error, got %v", err)
 	}
 }
 
 func TestBuildPlanReadsNormalizedSourcePaths(t *testing.T) {
 	targetDir := t.TempDir()
-	writePlanFile(t, targetDir, ".driftline-target.yaml", "version: 1\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: sample\n")
+	writePlanFile(t, targetDir, ".driftline-target.yaml", "version: 2\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: sample\n")
 	client := fakeSourceClient{
 		refs: map[string]string{"y-writings/source-repo@main": "0123456789abcdef0123456789abcdef01234567"},
 		files: map[string][]byte{
-			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:.driftline-source.yaml": []byte("version: 1\nfiles:\n  - id: sample\n    paths:\n      - ./sample.txt\n"),
+			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:.driftline-source.yaml": []byte("version: 2\nfiles:\n  - id: sample\n    paths:\n      sample:\n        path: ./sample.txt\n"),
 			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:sample.txt":             []byte("hello\n"),
 		},
 	}
@@ -217,10 +217,10 @@ func TestBuildPlanReadsNormalizedSourcePaths(t *testing.T) {
 
 func TestBuildPlanRejectsUnknownSourceID(t *testing.T) {
 	targetDir := t.TempDir()
-	writePlanFile(t, targetDir, ".driftline-target.yaml", "version: 1\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: missing\n")
+	writePlanFile(t, targetDir, ".driftline-target.yaml", "version: 2\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: missing\n")
 	client := fakeSourceClient{
 		refs:  map[string]string{"y-writings/source-repo@main": "0123456789abcdef0123456789abcdef01234567"},
-		files: map[string][]byte{"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:.driftline-source.yaml": []byte("version: 1\nfiles: []\n")},
+		files: map[string][]byte{"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:.driftline-source.yaml": []byte("version: 2\nfiles: []\n")},
 	}
 	_, err := BuildPlan(PlanOptions{TargetDir: targetDir, Source: client})
 	if err == nil || !strings.Contains(err.Error(), "unknown source file id") {
@@ -230,10 +230,10 @@ func TestBuildPlanRejectsUnknownSourceID(t *testing.T) {
 
 func TestBuildPlanRejectsResolvedDuplicateTargets(t *testing.T) {
 	targetDir := t.TempDir()
-	writePlanFile(t, targetDir, ".driftline-target.yaml", "version: 1\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: first\n    path_overrides:\n      - from: first.txt\n        to: same.txt\n  - id: second\n    path_overrides:\n      - from: second.txt\n        to: same.txt\n")
+	writePlanFile(t, targetDir, ".driftline-target.yaml", "version: 2\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: first\n    path_overrides:\n      first: same.txt\n  - id: second\n    path_overrides:\n      second: same.txt\n")
 	client := fakeSourceClient{
 		refs:  map[string]string{"y-writings/source-repo@main": "0123456789abcdef0123456789abcdef01234567"},
-		files: map[string][]byte{"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:.driftline-source.yaml": []byte("version: 1\nfiles:\n  - id: first\n    paths:\n      - first.txt\n  - id: second\n    paths:\n      - second.txt\n")},
+		files: map[string][]byte{"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:.driftline-source.yaml": []byte("version: 2\nfiles:\n  - id: first\n    paths:\n      first:\n        path: first.txt\n  - id: second\n    paths:\n      second:\n        path: second.txt\n")},
 	}
 	_, err := BuildPlan(PlanOptions{TargetDir: targetDir, Source: client})
 	if err == nil || !strings.Contains(err.Error(), "duplicate target") {
@@ -243,11 +243,11 @@ func TestBuildPlanRejectsResolvedDuplicateTargets(t *testing.T) {
 
 func TestBuildPlanRejectsNormalizedDuplicateTargets(t *testing.T) {
 	targetDir := t.TempDir()
-	writePlanFile(t, targetDir, ".driftline-target.yaml", "version: 1\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: first\n    path_overrides:\n      - from: first.txt\n        to: foo.txt\n  - id: second\n    path_overrides:\n      - from: second.txt\n        to: ./foo.txt\n")
+	writePlanFile(t, targetDir, ".driftline-target.yaml", "version: 2\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: first\n    path_overrides:\n      first: foo.txt\n  - id: second\n    path_overrides:\n      second: ./foo.txt\n")
 	client := fakeSourceClient{
 		refs: map[string]string{"y-writings/source-repo@main": "0123456789abcdef0123456789abcdef01234567"},
 		files: map[string][]byte{
-			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:.driftline-source.yaml": []byte("version: 1\nfiles:\n  - id: first\n    paths:\n      - first.txt\n  - id: second\n    paths:\n      - second.txt\n"),
+			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:.driftline-source.yaml": []byte("version: 2\nfiles:\n  - id: first\n    paths:\n      first:\n        path: first.txt\n  - id: second\n    paths:\n      second:\n        path: second.txt\n"),
 			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:first.txt":              []byte("first\n"),
 			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:second.txt":             []byte("second\n"),
 		},
@@ -260,13 +260,13 @@ func TestBuildPlanRejectsNormalizedDuplicateTargets(t *testing.T) {
 
 func TestBuildPlanTreatsNormalizedLockTargetAsActive(t *testing.T) {
 	targetDir := t.TempDir()
-	writePlanFile(t, targetDir, ".driftline-target.yaml", "version: 1\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: sample\n    path_overrides:\n      - from: sample.txt\n        to: ./foo.txt\n")
+	writePlanFile(t, targetDir, ".driftline-target.yaml", "version: 2\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: sample\n    path_overrides:\n      sample: ./foo.txt\n")
 	writePlanFile(t, targetDir, "foo.txt", "hello\n")
 	writePlanFile(t, targetDir, "driftline-lock.yaml", "version: 1\nrepository: y-writings/source-repo\nref: main\ncommit: 0123456789abcdef0123456789abcdef01234567\nfiles:\n  - id: sample\n    target_path: foo.txt\n")
 	client := fakeSourceClient{
 		refs: map[string]string{"y-writings/source-repo@main": "0123456789abcdef0123456789abcdef01234567"},
 		files: map[string][]byte{
-			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:.driftline-source.yaml": []byte("version: 1\nfiles:\n  - id: sample\n    paths:\n      - sample.txt\n"),
+			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:.driftline-source.yaml": []byte("version: 2\nfiles:\n  - id: sample\n    paths:\n      sample:\n        path: sample.txt\n"),
 			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:sample.txt":             []byte("hello\n"),
 		},
 	}
@@ -290,20 +290,20 @@ func TestBuildPlanRejectsReservedTargetPaths(t *testing.T) {
 		manifest     string
 	}{
 		"source path default target config": {
-			targetConfig: "version: 1\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: sample\n",
-			manifest:     "version: 1\nfiles:\n  - id: sample\n    paths:\n      - .driftline-target.yaml\n",
+			targetConfig: "version: 2\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: sample\n",
+			manifest:     "version: 2\nfiles:\n  - id: sample\n    paths:\n      sample:\n        path: .driftline-target.yaml\n",
 		},
 		"target config override lock": {
-			targetConfig: "version: 1\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: sample\n    path_overrides:\n      - from: sample.txt\n        to: driftline-lock.yaml\n",
-			manifest:     "version: 1\nfiles:\n  - id: sample\n    paths:\n      - sample.txt\n",
+			targetConfig: "version: 2\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: sample\n    path_overrides:\n      sample: driftline-lock.yaml\n",
+			manifest:     "version: 2\nfiles:\n  - id: sample\n    paths:\n      sample:\n        path: sample.txt\n",
 		},
 		"normalized source path default target config": {
-			targetConfig: "version: 1\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: sample\n",
-			manifest:     "version: 1\nfiles:\n  - id: sample\n    paths:\n      - ./.driftline-target.yaml\n",
+			targetConfig: "version: 2\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: sample\n",
+			manifest:     "version: 2\nfiles:\n  - id: sample\n    paths:\n      sample:\n        path: ./.driftline-target.yaml\n",
 		},
 		"normalized target config override lock": {
-			targetConfig: "version: 1\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: sample\n    path_overrides:\n      - from: sample.txt\n        to: ./driftline-lock.yaml\n",
-			manifest:     "version: 1\nfiles:\n  - id: sample\n    paths:\n      - sample.txt\n",
+			targetConfig: "version: 2\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: sample\n    path_overrides:\n      sample: ./driftline-lock.yaml\n",
+			manifest:     "version: 2\nfiles:\n  - id: sample\n    paths:\n      sample:\n        path: sample.txt\n",
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -326,13 +326,13 @@ func TestBuildPlanRejectsReservedTargetPaths(t *testing.T) {
 
 func TestBuildPlanDropsStaleLockEntryWhenTargetIsActiveAgain(t *testing.T) {
 	targetDir := t.TempDir()
-	writePlanFile(t, targetDir, ".driftline-target.yaml", "version: 1\nsource:\n  repository: y-writings/new-source\n  ref: main\nfiles:\n  - id: sample\n    path_overrides:\n      - from: sample.txt\n        to: same.txt\n")
+	writePlanFile(t, targetDir, ".driftline-target.yaml", "version: 2\nsource:\n  repository: y-writings/new-source\n  ref: main\nfiles:\n  - id: sample\n    path_overrides:\n      sample: same.txt\n")
 	writePlanFile(t, targetDir, "same.txt", "old\n")
 	writePlanFile(t, targetDir, "driftline-lock.yaml", "version: 1\nrepository: y-writings/old-source\nref: main\ncommit: oldoldoldoldoldoldoldoldoldoldoldoldoldoldoldold\nfiles:\n  - id: old-id\n    target_path: same.txt\n")
 	client := fakeSourceClient{
 		refs: map[string]string{"y-writings/new-source@main": "0123456789abcdef0123456789abcdef01234567"},
 		files: map[string][]byte{
-			"y-writings/new-source@0123456789abcdef0123456789abcdef01234567:.driftline-source.yaml": []byte("version: 1\nfiles:\n  - id: sample\n    paths:\n      - sample.txt\n"),
+			"y-writings/new-source@0123456789abcdef0123456789abcdef01234567:.driftline-source.yaml": []byte("version: 2\nfiles:\n  - id: sample\n    paths:\n      sample:\n        path: sample.txt\n"),
 			"y-writings/new-source@0123456789abcdef0123456789abcdef01234567:sample.txt":             []byte("new\n"),
 		},
 	}

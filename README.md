@@ -35,27 +35,35 @@ Editors that support JSON Schema can validate it with the canonical schema.
 
 ```yaml
 # yaml-language-server: $schema=https://raw.githubusercontent.com/y-writings/driftline/main/schema.json
-version: 1
+version: 2
 gitignore:
   - .cache/tool
 files:
   - id: github-workflow
+    name: GitHub workflows
     paths:
-      - .github/workflows/ci.yaml
-      - .github/workflows/release.yaml
+      ci:
+        name: CI workflow
+        path: .github/workflows/ci.yaml
+      release:
+        name: Release workflow
+        path: .github/workflows/release.yaml
   - id: local-config
     paths:
-      - templates/config.local
+      config:
+        path: templates/config.local
 ```
 
-Source Manifest file entries define adoption units. Each `id` can expose one or more source-side `paths`; target paths belong to the Target Config.
+Source Manifest file entries define adoption units. Each `id` can expose one or more source-side `paths` keyed by stable file ID; target paths belong to the Target Config.
 
 Allowed Source Manifest properties:
 
 | Section | Properties |
 | --- | --- |
 | root | `version`, `gitignore`, `files` |
-| `files[]` | `id`, `paths` |
+| `files[]` | `id`, `name`, `paths` |
+| `paths` | stable file ID keys |
+| `paths.<file_id>` | `name`, `path` |
 
 ## Target Config
 
@@ -69,7 +77,7 @@ This creates `.driftline-target.yaml` in the Target Repository.
 
 ```yaml
 # yaml-language-server: $schema=https://raw.githubusercontent.com/y-writings/driftline/main/target-schema.json
-version: 1
+version: 2
 source:
   repository: y-writings/source-repo
   ref: main
@@ -86,16 +94,15 @@ Allowed Target Config properties:
 | root | `version`, `source`, `files` |
 | `source` | `repository`, `ref` |
 | `files[]` | `id`, `path_overrides`, `if_not_exists` |
-| `path_overrides[]` | `from`, `to` |
+| `path_overrides` | Source Manifest file ID keys with target path values |
 
-When a Target Config file entry has no `path_overrides`, driftline writes each source path to the same relative path in the Target Repository. Add `path_overrides` only for source paths that need a different target-side path:
+When a Target Config file entry has no `path_overrides`, driftline writes each source path to the same relative path in the Target Repository. Add `path_overrides` only for Source Manifest file IDs that need a different target-side path:
 
 ```yaml
 files:
   - id: github-workflow
     path_overrides:
-      - from: .github/workflows/ci.yaml
-        to: .github/workflows/project-ci.yaml
+      ci: .github/workflows/project-ci.yaml
 ```
 
 Use `--ref` with `init` to pin the configured branch, tag, or commit-ish by name:

@@ -177,23 +177,22 @@ func resolveTargetConfigFile(configured TargetConfigFile, manifestItem SourceMan
 
 	sourcePaths := map[string]struct{}{}
 	for _, sourcePath := range manifestItem.Paths {
-		sourcePaths[normalizedConfigPath(sourcePath)] = struct{}{}
+		sourcePaths[sourcePath.ID] = struct{}{}
 	}
 
 	overrides := map[string]string{}
-	for _, override := range configured.PathOverrides {
-		from := normalizedConfigPath(override.From)
-		if _, ok := sourcePaths[from]; !ok {
-			return nil, fmt.Errorf("target config file id %q path override from %q does not match a source path", configured.ID, override.From)
+	for pathID, targetPath := range configured.PathOverrides {
+		if _, ok := sourcePaths[pathID]; !ok {
+			return nil, fmt.Errorf("target config file id %q path override %q does not match a source path id", configured.ID, pathID)
 		}
-		overrides[from] = normalizedConfigPath(override.To)
+		overrides[pathID] = normalizedConfigPath(targetPath)
 	}
 
 	resolved := make([]resolvedFile, 0, len(manifestItem.Paths))
 	for _, sourcePath := range manifestItem.Paths {
-		source := normalizedConfigPath(sourcePath)
+		source := normalizedConfigPath(sourcePath.Path)
 		target := source
-		if overrideTarget, ok := overrides[source]; ok {
+		if overrideTarget, ok := overrides[sourcePath.ID]; ok {
 			target = overrideTarget
 		}
 		resolved = append(resolved, resolvedFile{id: configured.ID, source: source, target: target, ifNotExists: ifNotExists})

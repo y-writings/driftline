@@ -35,9 +35,14 @@ func TestSourceManifestSchemaMatchesParserAllowedKeys(t *testing.T) {
 		t.Fatal("source manifest schema must not allow file if_not_exists")
 	}
 	pathsSchema := objectValue(objectValue(fileItemSchema, "properties"), "paths")
-	if got := numberValue(pathsSchema, "minItems"); got != 1 {
+	if got := numberValue(pathsSchema, "minProperties"); got != 1 {
 		t.Fatalf("paths must require at least one item, got %v", got)
 	}
+	assertDynamicKeyPattern(t, "source path ids", pathsSchema)
+	pathItemSchema := schemaDef(t, schema, stringValue(objectValue(pathsSchema, "additionalProperties"), "$ref"), "sourcePath")
+	assertFalseValue(t, "source path additionalProperties", pathItemSchema, "additionalProperties")
+	assertSameStringSet(t, "source path properties", propertyNames(objectValue(pathItemSchema, "properties")), map[string]struct{}{"name": {}, "path": {}})
+	assertSameStringSet(t, "source path required", stringArrayValue(pathItemSchema, "required"), map[string]struct{}{"path": {}})
 }
 
 func TestTargetConfigSchemaMatchesParserAllowedKeys(t *testing.T) {
@@ -68,13 +73,13 @@ func TestTargetConfigSchemaMatchesParserAllowedKeys(t *testing.T) {
 	}
 
 	pathOverridesSchema := objectValue(objectValue(fileItemSchema, "properties"), "path_overrides")
-	if got := numberValue(pathOverridesSchema, "minItems"); got != 1 {
+	if got := numberValue(pathOverridesSchema, "minProperties"); got != 1 {
 		t.Fatalf("path_overrides must require at least one item, got %v", got)
 	}
-	overrideItemSchema := schemaDef(t, schema, stringValue(objectValue(pathOverridesSchema, "items"), "$ref"), "pathOverride")
-	assertFalseValue(t, "path override additionalProperties", overrideItemSchema, "additionalProperties")
-	assertSameStringSet(t, "path override properties", propertyNames(objectValue(overrideItemSchema, "properties")), allowed["path_overrides"])
-	assertSameStringSet(t, "path override required", stringArrayValue(overrideItemSchema, "required"), map[string]struct{}{"from": {}, "to": {}})
+	assertDynamicKeyPattern(t, "path override ids", pathOverridesSchema)
+	if stringValue(objectValue(pathOverridesSchema, "additionalProperties"), "$ref") != "#/$defs/relativePath" {
+		t.Fatalf("path_overrides must allow file id keys with target path string values: %#v", pathOverridesSchema)
+	}
 }
 
 func TestSourceManifestSchemaRejectsTrailingSlashSourcePaths(t *testing.T) {
@@ -169,5 +174,13 @@ func assertFalseValue(t *testing.T, label string, values map[string]any, key str
 	value, ok := values[key].(bool)
 	if !ok || value {
 		t.Fatalf("%s must be false, got %#v", label, values[key])
+	}
+}
+
+func assertDynamicKeyPattern(t *testing.T, label string, schema map[string]any) {
+	t.Helper()
+	propertyNames := objectValue(schema, "propertyNames")
+	if stringValue(propertyNames, "type") != "string" || stringValue(propertyNames, "pattern") != "\\S" {
+		t.Fatalf("%s must require non-blank keys, got %#v", label, propertyNames)
 	}
 }
