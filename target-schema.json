@@ -56,6 +56,10 @@
           "description": "Per-source-file target path overrides for this adoption unit, keyed by Source Manifest file identifier.",
           "type": "object",
           "minProperties": 1,
+          "propertyNames": {
+            "type": "string",
+            "pattern": "\\S"
+          },
           "additionalProperties": {
             "$ref": "#/$defs/relativePath"
           }

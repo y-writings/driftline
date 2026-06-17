@@ -46,6 +46,10 @@
           "description": "Source files included in this adoption unit, keyed by stable file identifier.",
           "type": "object",
           "minProperties": 1,
+          "propertyNames": {
+            "type": "string",
+            "pattern": "\\S"
+          },
           "additionalProperties": {
             "$ref": "#/$defs/sourcePath"
           }
