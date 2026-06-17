@@ -43,7 +43,7 @@ func TestInitCreatesTargetConfigFromSourceManifest(t *testing.T) {
 		defaultRef:    "main",
 		defaultCommit: "0123456789abcdef0123456789abcdef01234567",
 		files: map[string][]byte{
-			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:.driftline-source.yaml": []byte("version: 1\ngitignore:\n  - .cache/tool\nfiles:\n  - id: example\n    paths:\n      - templates/example.txt\n      - templates/example-extra.txt\n  - id: local-config\n    paths:\n      - templates/config.local\n"),
+			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:.driftline-source.yaml": []byte("version: 2\ngitignore:\n  - .cache/tool\nfiles:\n  - id: example\n    name: Example files\n    paths:\n      example:\n        name: Example file\n        path: templates/example.txt\n      extra:\n        path: templates/example-extra.txt\n  - id: local-config\n    paths:\n      config:\n        path: templates/config.local\n"),
 		},
 	}
 
@@ -55,7 +55,7 @@ func TestInitCreatesTargetConfigFromSourceManifest(t *testing.T) {
 	}
 
 	got := readFile(t, targetDir, ".driftline-target.yaml")
-	for _, want := range []string{"version: 1", "repository: y-writings/source-repo", "ref: main", "id: example", "id: local-config"} {
+	for _, want := range []string{"version: 2", "repository: y-writings/source-repo", "ref: main", "id: example", "id: local-config"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("generated config missing %q:\n%s", want, got)
 		}
@@ -78,7 +78,7 @@ func TestInitRefPreservesInputRef(t *testing.T) {
 	targetDir := t.TempDir()
 	client := commandFakeSourceClient{
 		refs:  map[string]string{"y-writings/source-repo@feature/foo": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
-		files: map[string][]byte{"y-writings/source-repo@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:.driftline-source.yaml": []byte("version: 1\nfiles: []\n")},
+		files: map[string][]byte{"y-writings/source-repo@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:.driftline-source.yaml": []byte("version: 2\nfiles: []\n")},
 	}
 	var stdout, stderr bytes.Buffer
 	runner := Runner{Source: client}
@@ -180,11 +180,11 @@ func TestPrintChangesShowsTargetForPartiallyDriftedFileSet(t *testing.T) {
 
 func TestCheckReportsMissingLockAndUpdateCreatesIt(t *testing.T) {
 	targetDir := t.TempDir()
-	writeFile(t, targetDir, ".driftline-target.yaml", "version: 1\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: github-workflow\n")
+	writeFile(t, targetDir, ".driftline-target.yaml", "version: 2\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: github-workflow\n")
 	client := commandFakeSourceClient{
 		refs: map[string]string{"y-writings/source-repo@main": "0123456789abcdef0123456789abcdef01234567"},
 		files: map[string][]byte{
-			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:.driftline-source.yaml":         []byte("version: 1\ngitignore:\n  - .cache/tool\nfiles:\n  - id: github-workflow\n    paths:\n      - .github/workflows/ci.yaml\n      - .github/workflows/release.yaml\n"),
+			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:.driftline-source.yaml":         []byte("version: 2\ngitignore:\n  - .cache/tool\nfiles:\n  - id: github-workflow\n    name: GitHub workflows\n    paths:\n      ci:\n        name: CI workflow\n        path: .github/workflows/ci.yaml\n      release:\n        name: Release workflow\n        path: .github/workflows/release.yaml\n"),
 			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:.github/workflows/ci.yaml":      []byte("ci\n"),
 			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:.github/workflows/release.yaml": []byte("release\n"),
 		},
@@ -232,12 +232,12 @@ func TestCheckReportsMissingLockAndUpdateCreatesIt(t *testing.T) {
 
 func TestUpdatePreservesIfNotExistsLocalEdits(t *testing.T) {
 	targetDir := t.TempDir()
-	writeFile(t, targetDir, ".driftline-target.yaml", "version: 1\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: local-config\n    if_not_exists: true\n")
+	writeFile(t, targetDir, ".driftline-target.yaml", "version: 2\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: local-config\n    if_not_exists: true\n")
 	writeFile(t, targetDir, "config.local", "initial-local\n")
 	client := commandFakeSourceClient{
 		refs: map[string]string{"y-writings/source-repo@main": "0123456789abcdef0123456789abcdef01234567"},
 		files: map[string][]byte{
-			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:.driftline-source.yaml": []byte("version: 1\nfiles:\n  - id: local-config\n    paths:\n      - config.local\n"),
+			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:.driftline-source.yaml": []byte("version: 2\nfiles:\n  - id: local-config\n    paths:\n      config:\n        path: config.local\n"),
 			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:config.local":           []byte("from-source\n"),
 		},
 	}
@@ -257,12 +257,12 @@ func TestUpdatePreservesIfNotExistsLocalEdits(t *testing.T) {
 
 func TestPruneRemovesStaleFileWithoutHashMetadata(t *testing.T) {
 	targetDir := t.TempDir()
-	writeFile(t, targetDir, ".driftline-target.yaml", "version: 1\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles: []\n")
+	writeFile(t, targetDir, ".driftline-target.yaml", "version: 2\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles: []\n")
 	writeFile(t, targetDir, "old.txt", "changed\n")
 	writeFile(t, targetDir, "driftline-lock.yaml", "version: 1\nrepository: y-writings/source-repo\nref: main\ncommit: 0123456789abcdef0123456789abcdef01234567\nfiles:\n  - id: old\n    target_path: old.txt\n")
 	client := commandFakeSourceClient{
 		refs:  map[string]string{"y-writings/source-repo@main": "0123456789abcdef0123456789abcdef01234567"},
-		files: map[string][]byte{"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:.driftline-source.yaml": []byte("version: 1\nfiles: []\n")},
+		files: map[string][]byte{"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:.driftline-source.yaml": []byte("version: 2\nfiles: []\n")},
 	}
 	var stdout, stderr bytes.Buffer
 	if err := (Runner{Source: client}).Run([]string{"prune", "--target-dir", targetDir}, &stdout, &stderr); err != nil {
@@ -280,14 +280,14 @@ func TestPruneDoesNotAdvanceActiveLockEntries(t *testing.T) {
 	targetDir := t.TempDir()
 	oldCommit := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	newCommit := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	writeFile(t, targetDir, ".driftline-target.yaml", "version: 1\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: sample\n")
+	writeFile(t, targetDir, ".driftline-target.yaml", "version: 2\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: sample\n")
 	writeFile(t, targetDir, "sample.txt", "old\n")
 	writeFile(t, targetDir, "old.txt", "stale\n")
 	writeFile(t, targetDir, "driftline-lock.yaml", "version: 1\nrepository: y-writings/source-repo\nref: main\ncommit: "+oldCommit+"\nfiles:\n  - id: sample\n    target_path: sample.txt\n  - id: old\n    target_path: old.txt\n")
 	client := commandFakeSourceClient{
 		refs: map[string]string{"y-writings/source-repo@main": newCommit},
 		files: map[string][]byte{
-			"y-writings/source-repo@" + newCommit + ":.driftline-source.yaml": []byte("version: 1\nfiles:\n  - id: sample\n    paths:\n      - sample.txt\n"),
+			"y-writings/source-repo@" + newCommit + ":.driftline-source.yaml": []byte("version: 2\nfiles:\n  - id: sample\n    paths:\n      sample:\n        path: sample.txt\n"),
 			"y-writings/source-repo@" + newCommit + ":sample.txt":             []byte("new\n"),
 		},
 	}

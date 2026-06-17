@@ -16,6 +16,68 @@ const (
 	LockFilePath       = "driftline-lock.yaml"
 )
 
+func (file *SourceManifestFile) UnmarshalYAML(node *yaml.Node) error {
+	type sourceManifestFileFields struct {
+		ID    string    `yaml:"id"`
+		Name  string    `yaml:"name"`
+		Paths yaml.Node `yaml:"paths"`
+	}
+
+	var fields sourceManifestFileFields
+	if err := node.Decode(&fields); err != nil {
+		return err
+	}
+	file.ID = fields.ID
+	file.Name = fields.Name
+	file.Paths = nil
+	if fields.Paths.Kind == 0 {
+		return nil
+	}
+	if fields.Paths.Kind != yaml.MappingNode {
+		return fmt.Errorf("source manifest file %q paths must be a mapping", fields.ID)
+	}
+	file.Paths = make([]SourceManifestPathEntry, 0, len(fields.Paths.Content)/2)
+	for i := 0; i < len(fields.Paths.Content)-1; i += 2 {
+		idNode := fields.Paths.Content[i]
+		pathNode := fields.Paths.Content[i+1]
+		if idNode.Kind != yaml.ScalarNode {
+			return fmt.Errorf("source manifest file %q path id must be a scalar", fields.ID)
+		}
+		path, err := decodeSourceManifestPathEntry(fields.ID, idNode.Value, pathNode)
+		if err != nil {
+			return err
+		}
+		file.Paths = append(file.Paths, path)
+	}
+	return nil
+}
+
+func decodeSourceManifestPathEntry(fileID string, pathID string, node *yaml.Node) (SourceManifestPathEntry, error) {
+	if node.Kind != yaml.MappingNode {
+		return SourceManifestPathEntry{}, fmt.Errorf("source manifest file %q path %q must be a mapping", fileID, pathID)
+	}
+	path := SourceManifestPathEntry{ID: pathID}
+	for i := 0; i < len(node.Content)-1; i += 2 {
+		keyNode := node.Content[i]
+		valueNode := node.Content[i+1]
+		switch keyNode.Value {
+		case "name":
+			if valueNode.Kind != yaml.ScalarNode {
+				return SourceManifestPathEntry{}, fmt.Errorf("source manifest file %q path %q name must be a scalar", fileID, pathID)
+			}
+			path.Name = valueNode.Value
+		case "path":
+			if valueNode.Kind != yaml.ScalarNode {
+				return SourceManifestPathEntry{}, fmt.Errorf("source manifest file %q path %q path must be a scalar", fileID, pathID)
+			}
+			path.Path = valueNode.Value
+		default:
+			return SourceManifestPathEntry{}, fmt.Errorf("unknown key %q", keyNode.Value)
+		}
+	}
+	return path, nil
+}
+
 func LoadSourceManifestBytes(data []byte) (SourceManifest, error) {
 	var manifest SourceManifest
 	doc, err := parseStrictYAML(data, allowedSourceManifestKeys())
@@ -64,7 +126,7 @@ func TargetConfigFromSourceManifest(repository string, ref string, manifest Sour
 		return TargetConfig{}, err
 	}
 	config := TargetConfig{
-		Version: 1,
+		Version: 2,
 		Source: TargetSource{
 			Repository: repository,
 			Ref:        ref,
@@ -74,7 +136,7 @@ func TargetConfigFromSourceManifest(repository string, ref string, manifest Sour
 	seenDefaultTargets := map[string]struct{}{}
 	for _, item := range manifest.Files {
 		for _, sourcePath := range item.Paths {
-			defaultTarget := normalizedConfigPath(sourcePath)
+			defaultTarget := normalizedConfigPath(sourcePath.Path)
 			if _, ok := seenDefaultTargets[defaultTarget]; ok {
 				return TargetConfig{}, fmt.Errorf("duplicate target %q", defaultTarget)
 			}
@@ -123,7 +185,8 @@ func WriteLock(path string, lock LockFile) error {
 func allowedSourceManifestKeys() map[string]map[string]struct{} {
 	return map[string]map[string]struct{}{
 		"":      set("version", "gitignore", "files"),
-		"files": set("id", "paths"),
+		"files": set("id", "name", "paths"),
+		"paths": nil,
 	}
 }
 
@@ -132,7 +195,7 @@ func allowedTargetConfigKeys() map[string]map[string]struct{} {
 		"":               set("version", "source", "files"),
 		"source":         set("repository", "ref"),
 		"files":          set("id", "path_overrides", "if_not_exists"),
-		"path_overrides": set("from", "to"),
+		"path_overrides": nil,
 	}
 }
 
@@ -212,7 +275,7 @@ func validateNodeKeys(node *yaml.Node, section string, allowed map[string]map[st
 				return fmt.Errorf("duplicate key %q", key)
 			}
 			seen[key] = struct{}{}
-			if checkUnknown {
+			if checkUnknown && allowedKeys != nil {
 				if _, ok := allowedKeys[key]; !ok {
 					return fmt.Errorf("unknown key %q", key)
 				}
@@ -236,7 +299,7 @@ func validateNodeKeys(node *yaml.Node, section string, allowed map[string]map[st
 }
 
 func validateSourceManifest(manifest SourceManifest, root *yaml.Node) error {
-	if manifest.Version != 1 {
+	if manifest.Version != 2 {
 		return fmt.Errorf("unsupported source manifest version %d", manifest.Version)
 	}
 	if err := requireSequence(root, "files", "source manifest"); err != nil {
@@ -256,10 +319,16 @@ func validateSourceManifest(manifest SourceManifest, root *yaml.Node) error {
 		}
 		seenPaths := map[string]struct{}{}
 		for _, sourcePath := range item.Paths {
-			if err := ValidateConfigPath(sourcePath, fmt.Sprintf("source %q", item.ID)); err != nil {
+			if strings.TrimSpace(sourcePath.ID) == "" {
+				return fmt.Errorf("source manifest file %q contains path without id", item.ID)
+			}
+			if sourcePath.Path == "" {
+				return fmt.Errorf("source manifest file %q path %q must define path", item.ID, sourcePath.ID)
+			}
+			if err := ValidateConfigPath(sourcePath.Path, fmt.Sprintf("source %q path %q", item.ID, sourcePath.ID)); err != nil {
 				return err
 			}
-			normalized := normalizedConfigPath(sourcePath)
+			normalized := normalizedConfigPath(sourcePath.Path)
 			if _, ok := seenPaths[normalized]; ok {
 				return fmt.Errorf("duplicate source path %q in source manifest file id %q", normalized, item.ID)
 			}
@@ -270,7 +339,7 @@ func validateSourceManifest(manifest SourceManifest, root *yaml.Node) error {
 }
 
 func validateTargetConfig(config TargetConfig, root *yaml.Node) error {
-	if config.Version != 1 {
+	if config.Version != 2 {
 		return fmt.Errorf("unsupported target config version %d", config.Version)
 	}
 	if err := requireMapping(root, "source", "target config"); err != nil {
@@ -295,22 +364,22 @@ func validateTargetConfig(config TargetConfig, root *yaml.Node) error {
 			return fmt.Errorf("duplicate target config file id %q", item.ID)
 		}
 		seen[item.ID] = struct{}{}
-		if i < len(fileNodes) && mappingHasKey(fileNodes[i], "path_overrides") && len(item.PathOverrides) == 0 {
-			return fmt.Errorf("target config file %q path_overrides must not be empty", item.ID)
+		if i < len(fileNodes) && mappingHasKey(fileNodes[i], "path_overrides") {
+			overridesNode := configMappingValue(fileNodes[i], "path_overrides")
+			if overridesNode == nil || overridesNode.Kind != yaml.MappingNode {
+				return fmt.Errorf("target config file %q path_overrides must be a mapping", item.ID)
+			}
+			if len(item.PathOverrides) == 0 {
+				return fmt.Errorf("target config file %q path_overrides must not be empty", item.ID)
+			}
 		}
-		seenFrom := map[string]struct{}{}
-		for _, override := range item.PathOverrides {
-			if err := ValidateConfigPath(override.From, fmt.Sprintf("target %q override from", item.ID)); err != nil {
+		for pathID, targetPath := range item.PathOverrides {
+			if strings.TrimSpace(pathID) == "" {
+				return fmt.Errorf("target config file %q contains path override without id", item.ID)
+			}
+			if err := ValidateConfigPath(targetPath, fmt.Sprintf("target %q override %q", item.ID, pathID)); err != nil {
 				return err
 			}
-			if err := ValidateConfigPath(override.To, fmt.Sprintf("target %q override to", item.ID)); err != nil {
-				return err
-			}
-			from := normalizedConfigPath(override.From)
-			if _, ok := seenFrom[from]; ok {
-				return fmt.Errorf("duplicate path override from %q in target config file id %q", from, item.ID)
-			}
-			seenFrom[from] = struct{}{}
 		}
 	}
 	return nil
