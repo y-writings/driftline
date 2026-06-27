@@ -179,7 +179,7 @@ ci = { path = ".github/workflows/ci.yaml", mode = "managed" }
 	assertPlanHasChange(t, plan, StatusTargetConfigAdd, "github-workflow.ci", "add target config entry")
 }
 
-func TestBuildPlanMovesStaleTargetConfigPathToNewManagedKey(t *testing.T) {
+func TestBuildPlanConflictsWhenNewManagedKeyReusesExistingStaleTarget(t *testing.T) {
 	targetDir := t.TempDir()
 	writePlanFile(t, targetDir, TargetConfigPath, targetConfigTOML(`[files.old]
 config = "same.txt"
@@ -195,8 +195,31 @@ config = { path = "same.txt", mode = "managed" }
 	if err != nil {
 		t.Fatalf("build plan failed: %v", err)
 	}
+	conflict := planChange(t, plan, StatusConflict, "new.config")
+	if conflict.Target != "same.txt" || !strings.Contains(conflict.Reason, "target already exists") || !conflict.ForceAllowed {
+		t.Fatalf("unexpected conflict for reused stale target: %#v", conflict)
+	}
+	assertPlanDoesNotHaveChange(t, plan, StatusUpdate, "new.config")
+}
+
+func TestBuildPlanForceMovesStaleTargetConfigPathToNewManagedKey(t *testing.T) {
+	targetDir := t.TempDir()
+	writePlanFile(t, targetDir, TargetConfigPath, targetConfigTOML(`[files.old]
+config = "same.txt"
+`))
+	writePlanFile(t, targetDir, "same.txt", "old\n")
+	client := newPlanSourceClient(`version = 2
+
+[files.new]
+config = { path = "same.txt", mode = "managed" }
+`, map[string]string{"same.txt": "new\n"})
+
+	plan, err := BuildPlan(PlanOptions{TargetDir: targetDir, Source: client, ForceKey: "new.config"})
+	if err != nil {
+		t.Fatalf("build plan failed: %v", err)
+	}
 	if plan.HasConflicts() {
-		t.Fatalf("stale target config entry should not conflict: %#v", plan.Changes)
+		t.Fatalf("forced stale target reuse should not conflict: %#v", plan.Changes)
 	}
 	change := planChange(t, plan, StatusUpdate, "new.config")
 	if !change.WritesTarget || change.Target != "same.txt" {

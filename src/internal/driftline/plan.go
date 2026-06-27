@@ -194,7 +194,7 @@ func (b planBuilder) addManagedChange(plan *Plan, file resolvedManagedFile) erro
 	if err != nil {
 		return fmt.Errorf("hash target %s: %w", file.target, err)
 	}
-	if !file.declared && file.staleOwner == "" && targetExists && b.opts.ForceKey != file.Key {
+	if !file.declared && targetExists && b.opts.ForceKey != file.Key {
 		plan.Changes = append(plan.Changes, conflictChange(file, "target already exists", true))
 		return nil
 	}

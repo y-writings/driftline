@@ -128,6 +128,34 @@ release = { path = ".github/workflows/release.yaml", mode = "template" }
 	}
 }
 
+func TestInitRejectsSourceFilesTargetingTargetConfig(t *testing.T) {
+	for name, sourceManifest := range map[string]string{
+		"managed": `version = 2
+
+[files.driftline]
+target = { path = ".driftline-target.toml", mode = "managed" }
+`,
+		"template": `version = 2
+
+[files.driftline]
+target = { path = ".driftline-target.toml", mode = "template" }
+`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			targetDir := t.TempDir()
+			client := newCommandSourceClient("main", sourceManifest, map[string]string{driftline.TargetConfigPath: "template bytes\n"})
+			var stdout, stderr bytes.Buffer
+
+			err := (Runner{Source: client}).Run([]string{"init", "y-writings/source-repo", "--target-dir", targetDir}, &stdout, &stderr)
+
+			if err == nil || !strings.Contains(err.Error(), "reserved target path") {
+				t.Fatalf("expected reserved target path error, got %v", err)
+			}
+			assertFileMissing(t, targetDir, driftline.TargetConfigPath)
+		})
+	}
+}
+
 func TestHelpOmitsPruneAndPruneCommandIsRemoved(t *testing.T) {
 	runner := Runner{Source: commandFakeSourceClient{}}
 	var stdout, stderr bytes.Buffer
