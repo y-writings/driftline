@@ -233,6 +233,68 @@ ci = ".github/workflows/ci.yaml"
 	}
 }
 
+func TestUpdatePreservesTargetConfigWhenOnlyManagedFileChanges(t *testing.T) {
+	targetDir := t.TempDir()
+	targetConfig := `version = 2
+
+# keep target-side comments and order
+[source]
+ref = "main"
+repository = "y-writings/source-repo"
+
+[files.github-workflow]
+# local placement rationale
+ci = ".github/workflows/ci.yaml"
+`
+	writeFile(t, targetDir, driftline.TargetConfigPath, targetConfig)
+	writeFile(t, targetDir, ".github/workflows/ci.yaml", "old\n")
+	client := newCommandSourceClient("main", `version = 2
+
+[files.github-workflow]
+ci = { path = ".github/workflows/ci.yaml", mode = "managed" }
+`, map[string]string{".github/workflows/ci.yaml": "new\n"})
+
+	var stdout, stderr bytes.Buffer
+	if err := (Runner{Source: client}).Run([]string{"update", "--target-dir", targetDir}, &stdout, &stderr); err != nil {
+		t.Fatalf("update failed: %v", err)
+	}
+	if got := readFile(t, targetDir, ".github/workflows/ci.yaml"); got != "new\n" {
+		t.Fatalf("managed file should be updated, got %q", got)
+	}
+	if got := readFile(t, targetDir, driftline.TargetConfigPath); got != targetConfig {
+		t.Fatalf("target config should not be rewritten for file-only update:\n%s", got)
+	}
+}
+
+func TestUpdatePreservesTargetConfigWhenAlreadySynced(t *testing.T) {
+	targetDir := t.TempDir()
+	targetConfig := `version = 2
+
+# keep target-side comments and order
+[source]
+ref = "main"
+repository = "y-writings/source-repo"
+
+[files.github-workflow]
+ci = ".github/workflows/ci.yaml"
+`
+	writeFile(t, targetDir, driftline.TargetConfigPath, targetConfig)
+	writeFile(t, targetDir, ".github/workflows/ci.yaml", "ci\n")
+	client := newCommandSourceClient("main", `version = 2
+
+[files.github-workflow]
+ci = { path = ".github/workflows/ci.yaml", mode = "managed" }
+`, map[string]string{".github/workflows/ci.yaml": "ci\n"})
+
+	var stdout, stderr bytes.Buffer
+	if err := (Runner{Source: client}).Run([]string{"update", "--target-dir", targetDir}, &stdout, &stderr); err != nil {
+		t.Fatalf("update failed: %v", err)
+	}
+	if got := readFile(t, targetDir, driftline.TargetConfigPath); got != targetConfig {
+		t.Fatalf("target config should not be rewritten when already synced:\n%s", got)
+	}
+}
+
 func TestUpdateManagedToTemplateLeavesTargetFileAndRemovesConfig(t *testing.T) {
 	targetDir := t.TempDir()
 	writeFile(t, targetDir, driftline.TargetConfigPath, targetConfigTOML(`[files.github-workflow]
