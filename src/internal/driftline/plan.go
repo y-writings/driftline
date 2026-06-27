@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 )
 
 type PlanOptions struct {
@@ -202,6 +203,10 @@ func (b planBuilder) addManagedChange(plan *Plan, file resolvedManagedFile, stal
 	if !blockedByStaleFile {
 		info, err := os.Stat(targetPath)
 		if err != nil {
+			if errors.Is(err, syscall.ENOTDIR) {
+				plan.Changes = append(plan.Changes, conflictChange(file, "target already exists", false))
+				return nil
+			}
 			if !errors.Is(err, os.ErrNotExist) {
 				return fmt.Errorf("stat target %s: %w", file.target, err)
 			}
@@ -284,6 +289,9 @@ func (b planBuilder) targetBlockedByStaleFileAncestor(target string, staleDelete
 		}
 		info, err := os.Stat(fullPath)
 		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if errors.Is(err, syscall.ENOTDIR) {
 			continue
 		}
 		if err != nil {

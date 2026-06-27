@@ -233,6 +233,51 @@ ci = ".github/workflows/ci.yaml"
 	}
 }
 
+func TestUpdateRemovesStaleConfigWhenTargetPathBlockedByFile(t *testing.T) {
+	targetDir := t.TempDir()
+	writeFile(t, targetDir, driftline.TargetConfigPath, targetConfigTOML(`[files.old]
+config = "config/old"
+`))
+	writeFile(t, targetDir, "config", "target-owned\n")
+	client := newCommandSourceClient("main", "version = 2\n", nil)
+
+	var stdout, stderr bytes.Buffer
+	if err := (Runner{Source: client}).Run([]string{"update", "--target-dir", targetDir}, &stdout, &stderr); err != nil {
+		t.Fatalf("update failed: %v", err)
+	}
+	if got := readFile(t, targetDir, "config"); got != "target-owned\n" {
+		t.Fatalf("parent file should be left untouched, got %q", got)
+	}
+	config := readFile(t, targetDir, driftline.TargetConfigPath)
+	if strings.Contains(config, "old") {
+		t.Fatalf("stale target config entry should be removed:\n%s", config)
+	}
+}
+
+func TestUpdateLeavesDirectoryAtStaleManagedPath(t *testing.T) {
+	targetDir := t.TempDir()
+	writeFile(t, targetDir, driftline.TargetConfigPath, targetConfigTOML(`[files.old]
+config = "dir"
+`))
+	if err := os.MkdirAll(filepath.Join(targetDir, "dir"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	client := newCommandSourceClient("main", "version = 2\n", nil)
+
+	var stdout, stderr bytes.Buffer
+	if err := (Runner{Source: client}).Run([]string{"update", "--target-dir", targetDir}, &stdout, &stderr); err != nil {
+		t.Fatalf("update failed: %v", err)
+	}
+	info, err := os.Stat(filepath.Join(targetDir, "dir"))
+	if err != nil || !info.IsDir() {
+		t.Fatalf("stale managed path directory should be left untouched, info=%#v err=%v", info, err)
+	}
+	config := readFile(t, targetDir, driftline.TargetConfigPath)
+	if strings.Contains(config, "old") {
+		t.Fatalf("stale target config entry should be removed:\n%s", config)
+	}
+}
+
 func TestUpdatePreservesTargetConfigWhenOnlyManagedFileChanges(t *testing.T) {
 	targetDir := t.TempDir()
 	targetConfig := `version = 2

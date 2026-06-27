@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"syscall"
 
 	"github.com/y-writings/driftline/src/internal/driftline"
 )
@@ -30,7 +31,7 @@ func runUpdate(source driftline.SourceClient, opts UpdateOptions, stdout io.Writ
 	changes := sortedChanges(plan.Changes)
 	for _, change := range changes {
 		if change.Status == driftline.StatusRemove && change.DeletesTarget {
-			if err := os.Remove(change.TargetPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			if err := removeManagedTargetFile(change.TargetPath); err != nil {
 				return err
 			}
 		}
@@ -48,6 +49,26 @@ func runUpdate(source driftline.SourceClient, opts UpdateOptions, stdout io.Writ
 		}
 	}
 	printChanges(stdout, plan.Changes)
+	return nil
+}
+
+func removeManagedTargetFile(targetPath string) error {
+	info, err := os.Lstat(targetPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) {
+			return nil
+		}
+		return err
+	}
+	if info.IsDir() {
+		return nil
+	}
+	if err := os.Remove(targetPath); err != nil {
+		if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) {
+			return nil
+		}
+		return err
+	}
 	return nil
 }
 

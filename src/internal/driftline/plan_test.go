@@ -287,6 +287,81 @@ config = { path = "dir", mode = "managed" }
 	assertPlanHasChange(t, plan, StatusTargetConfigRemove, "old.config", "remove target config entry")
 }
 
+func TestBuildPlanConflictsWhenNewManagedChildIsBlockedByTargetOwnedFile(t *testing.T) {
+	targetDir := t.TempDir()
+	writePlanFile(t, targetDir, TargetConfigPath, targetConfigTOML(""))
+	writePlanFile(t, targetDir, "config", "target-owned\n")
+	client := newPlanSourceClient(`version = 2
+
+[files.tool]
+config = { path = "config/tool.toml", mode = "managed" }
+`, map[string]string{"config/tool.toml": "source\n"})
+
+	plan, err := BuildPlan(PlanOptions{TargetDir: targetDir, Source: client})
+	if err != nil {
+		t.Fatalf("build plan failed: %v", err)
+	}
+
+	conflict := planChange(t, plan, StatusConflict, "tool.config")
+	if conflict.Target != "config/tool.toml" || !strings.Contains(conflict.Reason, "target already exists") || conflict.ForceAllowed {
+		t.Fatalf("unexpected blocked child conflict: %#v", conflict)
+	}
+	assertPlanDoesNotHaveChange(t, plan, StatusAdd, "tool.config")
+}
+
+func TestBuildPlanConflictsWhenDeclaredManagedChildIsBlockedByTargetOwnedFile(t *testing.T) {
+	targetDir := t.TempDir()
+	writePlanFile(t, targetDir, TargetConfigPath, targetConfigTOML(`[files.tool]
+config = "config/tool.toml"
+`))
+	writePlanFile(t, targetDir, "config", "target-owned\n")
+	client := newPlanSourceClient(`version = 2
+
+[files.tool]
+config = { path = "config/tool.toml", mode = "managed" }
+`, map[string]string{"config/tool.toml": "source\n"})
+
+	plan, err := BuildPlan(PlanOptions{TargetDir: targetDir, Source: client})
+	if err != nil {
+		t.Fatalf("build plan failed: %v", err)
+	}
+
+	conflict := planChange(t, plan, StatusConflict, "tool.config")
+	if conflict.Target != "config/tool.toml" || !strings.Contains(conflict.Reason, "target already exists") || conflict.ForceAllowed {
+		t.Fatalf("unexpected declared blocked child conflict: %#v", conflict)
+	}
+	assertPlanDoesNotHaveChange(t, plan, StatusAdd, "tool.config")
+	assertPlanDoesNotHaveChange(t, plan, StatusUpdate, "tool.config")
+}
+
+func TestBuildPlanConflictsWhenStaleChildProbeIsBlockedByTargetOwnedFile(t *testing.T) {
+	targetDir := t.TempDir()
+	writePlanFile(t, targetDir, TargetConfigPath, targetConfigTOML(`[files.old]
+config = "config/old"
+`))
+	writePlanFile(t, targetDir, "config", "target-owned\n")
+	client := newPlanSourceClient(`version = 2
+
+[files.new]
+config = { path = "config/old/tool.toml", mode = "managed" }
+`, map[string]string{"config/old/tool.toml": "source\n"})
+
+	plan, err := BuildPlan(PlanOptions{TargetDir: targetDir, Source: client})
+	if err != nil {
+		t.Fatalf("build plan failed: %v", err)
+	}
+
+	conflict := planChange(t, plan, StatusConflict, "new.config")
+	if conflict.Target != "config/old/tool.toml" || !strings.Contains(conflict.Reason, "target already exists") || conflict.ForceAllowed {
+		t.Fatalf("unexpected stale probe conflict: %#v", conflict)
+	}
+	remove := planChange(t, plan, StatusRemove, "old.config")
+	if !remove.DeletesTarget || remove.Target != "config/old" {
+		t.Fatalf("unexpected stale removal: %#v", remove)
+	}
+	assertPlanHasChange(t, plan, StatusTargetConfigRemove, "old.config", "remove target config entry")
+}
+
 func TestBuildPlanIgnoresTemplateAndOldLockFilesDuringUpdate(t *testing.T) {
 	targetDir := t.TempDir()
 	writePlanFile(t, targetDir, TargetConfigPath, targetConfigTOML(""))
