@@ -106,6 +106,15 @@ func TestInitFailsBeforeWritingWhenConfigOrManagedTargetExists(t *testing.T) {
 		"managed target exists": func(targetDir string) {
 			writeFile(t, targetDir, ".github/workflows/ci.yaml", "existing\n")
 		},
+		"managed target broken symlink exists": func(targetDir string) {
+			linkPath := filepath.Join(targetDir, ".github/workflows/ci.yaml")
+			if err := os.MkdirAll(filepath.Dir(linkPath), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(filepath.Join(t.TempDir(), "missing"), linkPath); err != nil {
+				t.Fatal(err)
+			}
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			targetDir := t.TempDir()
@@ -403,6 +412,47 @@ ci = { path = ".github/workflows/ci.yaml", mode = "managed" }
 	config := readFile(t, targetDir, driftline.TargetConfigPath)
 	if !strings.Contains(config, `[files.github-workflow]`) || strings.Contains(config, "force") {
 		t.Fatalf("target config should contain only path entry, no force state:\n%s", config)
+	}
+}
+
+func TestUpdateConflictsWhenNewManagedTargetIsBrokenSymlink(t *testing.T) {
+	targetDir := t.TempDir()
+	outsideDir := t.TempDir()
+	writeFile(t, targetDir, driftline.TargetConfigPath, targetConfigTOML(""))
+	linkPath := filepath.Join(targetDir, ".github/workflows/ci.yaml")
+	if err := os.MkdirAll(filepath.Dir(linkPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	outsideTarget := filepath.Join(outsideDir, "outside.txt")
+	if err := os.Symlink(outsideTarget, linkPath); err != nil {
+		t.Fatal(err)
+	}
+	client := newCommandSourceClient("main", `version = 2
+
+[files.github-workflow]
+ci = { path = ".github/workflows/ci.yaml", mode = "managed" }
+`, map[string]string{".github/workflows/ci.yaml": "source\n"})
+
+	var stdout, stderr bytes.Buffer
+	err := (Runner{Source: client}).Run([]string{"update", "--target-dir", targetDir}, &stdout, &stderr)
+	if err == nil {
+		t.Fatal("expected broken symlink target conflict")
+	}
+	for _, want := range []string{"conflict github-workflow.ci: target already exists", "target: .github/workflows/ci.yaml"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("conflict output missing %q:\n%s", want, stdout.String())
+		}
+	}
+	info, err := os.Lstat(linkPath)
+	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("broken symlink should be left untouched, info=%#v err=%v", info, err)
+	}
+	if _, err := os.Stat(outsideTarget); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("update must not write through broken symlink, stat err=%v", err)
+	}
+	config := readFile(t, targetDir, driftline.TargetConfigPath)
+	if strings.Contains(config, "github-workflow") {
+		t.Fatalf("conflict must not update target config:\n%s", config)
 	}
 }
 

@@ -205,7 +205,7 @@ func (b planBuilder) addManagedChange(plan *Plan, file resolvedManagedFile, stal
 		return err
 	}
 	if !blockedByStaleFile {
-		info, err := os.Stat(targetPath)
+		info, err := os.Lstat(targetPath)
 		if err != nil {
 			if errors.Is(err, syscall.ENOTDIR) {
 				plan.Changes = append(plan.Changes, conflictChange(file, "target already exists", false))
@@ -214,6 +214,9 @@ func (b planBuilder) addManagedChange(plan *Plan, file resolvedManagedFile, stal
 			if !errors.Is(err, os.ErrNotExist) {
 				return fmt.Errorf("stat target %s: %w", file.target, err)
 			}
+		} else if info.Mode()&os.ModeSymlink != 0 {
+			plan.Changes = append(plan.Changes, conflictChange(file, "target already exists", false))
+			return nil
 		} else if info.IsDir() {
 			if !file.declared {
 				plan.Changes = append(plan.Changes, conflictChange(file, "target already exists", false))

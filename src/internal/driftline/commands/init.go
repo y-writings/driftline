@@ -116,7 +116,7 @@ func collectInitialTemplates(source driftline.SourceClient, opts InitOptions, co
 }
 
 func fileExists(path string) (bool, error) {
-	_, err := os.Stat(path)
+	_, err := os.Lstat(path)
 	if err == nil {
 		return true, nil
 	}
