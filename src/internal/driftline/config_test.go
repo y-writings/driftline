@@ -87,6 +87,7 @@ func TestLoadTargetConfigRejectsInvalidTOMLModel(t *testing.T) {
 		"invalid group id":         "version = 2\n[source]\nrepository = \"y-writings/source-repo\"\nref = \"main\"\n[files.\"github.workflow\"]\nci = \"ci.yaml\"\n",
 		"invalid file id":          "version = 2\n[source]\nrepository = \"y-writings/source-repo\"\nref = \"main\"\n[files.github-workflow]\n\"bad/id\" = \"ci.yaml\"\n",
 		"invalid target path":      "version = 2\n[source]\nrepository = \"y-writings/source-repo\"\nref = \"main\"\n[files.github-workflow]\nci = \"../ci.yaml\"\n",
+		"reserved target path":     "version = 2\n[source]\nrepository = \"y-writings/source-repo\"\nref = \"main\"\n[files.driftline]\ntarget = \".driftline-target.toml\"\n",
 		"duplicate target path":    "version = 2\n[source]\nrepository = \"y-writings/source-repo\"\nref = \"main\"\n[files.first]\nci = \"./same.yaml\"\n[files.second]\nci = \"same.yaml\"\n",
 		"old path_overrides shape": "version = 2\n[source]\nrepository = \"y-writings/source-repo\"\nref = \"main\"\n[[files]]\nid = \"ci\"\npath_overrides = { ci = \"custom.yaml\" }\n",
 		"old yaml shape":           "version: 2\nsource:\n  repository: y-writings/source-repo\n",

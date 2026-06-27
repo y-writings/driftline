@@ -259,6 +259,34 @@ config = { path = "dir/file", mode = "managed" }
 	assertPlanHasChange(t, plan, StatusTargetConfigRemove, "old.config", "remove target config entry")
 }
 
+func TestBuildPlanConflictsWhenNewManagedParentReusesStaleChildDirectory(t *testing.T) {
+	targetDir := t.TempDir()
+	writePlanFile(t, targetDir, TargetConfigPath, targetConfigTOML(`[files.old]
+config = "dir/file"
+`))
+	writePlanFile(t, targetDir, "dir/file", "old\n")
+	client := newPlanSourceClient(`version = 2
+
+[files.new]
+config = { path = "dir", mode = "managed" }
+`, map[string]string{"dir": "new\n"})
+
+	plan, err := BuildPlan(PlanOptions{TargetDir: targetDir, Source: client})
+	if err != nil {
+		t.Fatalf("build plan failed: %v", err)
+	}
+
+	conflict := planChange(t, plan, StatusConflict, "new.config")
+	if conflict.Target != "dir" || !strings.Contains(conflict.Reason, "target already exists") || conflict.ForceAllowed {
+		t.Fatalf("unexpected parent directory conflict: %#v", conflict)
+	}
+	remove := planChange(t, plan, StatusRemove, "old.config")
+	if !remove.DeletesTarget || remove.Target != "dir/file" {
+		t.Fatalf("unexpected stale child removal: %#v", remove)
+	}
+	assertPlanHasChange(t, plan, StatusTargetConfigRemove, "old.config", "remove target config entry")
+}
+
 func TestBuildPlanIgnoresTemplateAndOldLockFilesDuringUpdate(t *testing.T) {
 	targetDir := t.TempDir()
 	writePlanFile(t, targetDir, TargetConfigPath, targetConfigTOML(""))

@@ -200,7 +200,23 @@ func (b planBuilder) addManagedChange(plan *Plan, file resolvedManagedFile, stal
 		return err
 	}
 	if !blockedByStaleFile {
-		currentHash, targetExists, err = FileHash(targetPath)
+		info, err := os.Stat(targetPath)
+		if err != nil {
+			if !errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("stat target %s: %w", file.target, err)
+			}
+		} else if info.IsDir() {
+			if !file.declared {
+				plan.Changes = append(plan.Changes, conflictChange(file, "target already exists", false))
+				return nil
+			}
+			return fmt.Errorf("target %s is a directory", file.target)
+		} else {
+			targetExists = true
+		}
+	}
+	if targetExists {
+		currentHash, _, err = FileHash(targetPath)
 		if err != nil {
 			return fmt.Errorf("hash target %s: %w", file.target, err)
 		}

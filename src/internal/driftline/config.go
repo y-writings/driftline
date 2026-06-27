@@ -264,6 +264,9 @@ func validateTargetConfig(config TargetConfig) error {
 				return err
 			}
 			normalized := normalizedConfigPath(targetPath)
+			if isReservedTargetPath(normalized) {
+				return fmt.Errorf("reserved target path %q", normalized)
+			}
 			if other, ok := seenTargets[normalized]; ok {
 				return fmt.Errorf("duplicate target path %q for %s and %s", normalized, other, key)
 			}
