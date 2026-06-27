@@ -5,89 +5,32 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 
-	"gopkg.in/yaml.v3"
+	"github.com/BurntSushi/toml"
 )
 
 const (
-	SourceManifestPath = ".driftline-source.yaml"
-	TargetConfigPath   = ".driftline-target.yaml"
-	LockFilePath       = "driftline-lock.yaml"
+	SourceManifestPath = ".driftline-source.toml"
+	TargetConfigPath   = ".driftline-target.toml"
+	removedLockPath    = "driftline-lock.yaml"
 )
 
-func (file *SourceManifestFile) UnmarshalYAML(node *yaml.Node) error {
-	type sourceManifestFileFields struct {
-		ID    string    `yaml:"id"`
-		Name  string    `yaml:"name"`
-		Paths yaml.Node `yaml:"paths"`
-	}
-
-	var fields sourceManifestFileFields
-	if err := node.Decode(&fields); err != nil {
-		return err
-	}
-	file.ID = fields.ID
-	file.Name = fields.Name
-	file.Paths = nil
-	if fields.Paths.Kind == 0 {
-		return nil
-	}
-	if fields.Paths.Kind != yaml.MappingNode {
-		return fmt.Errorf("source manifest file %q paths must be a mapping", fields.ID)
-	}
-	file.Paths = make([]SourceManifestPathEntry, 0, len(fields.Paths.Content)/2)
-	for i := 0; i < len(fields.Paths.Content)-1; i += 2 {
-		idNode := fields.Paths.Content[i]
-		pathNode := fields.Paths.Content[i+1]
-		if idNode.Kind != yaml.ScalarNode {
-			return fmt.Errorf("source manifest file %q path id must be a scalar", fields.ID)
-		}
-		path, err := decodeSourceManifestPathEntry(fields.ID, idNode.Value, pathNode)
-		if err != nil {
-			return err
-		}
-		file.Paths = append(file.Paths, path)
-	}
-	return nil
-}
-
-func decodeSourceManifestPathEntry(fileID string, pathID string, node *yaml.Node) (SourceManifestPathEntry, error) {
-	if node.Kind != yaml.MappingNode {
-		return SourceManifestPathEntry{}, fmt.Errorf("source manifest file %q path %q must be a mapping", fileID, pathID)
-	}
-	path := SourceManifestPathEntry{ID: pathID}
-	for i := 0; i < len(node.Content)-1; i += 2 {
-		keyNode := node.Content[i]
-		valueNode := node.Content[i+1]
-		switch keyNode.Value {
-		case "name":
-			if valueNode.Kind != yaml.ScalarNode {
-				return SourceManifestPathEntry{}, fmt.Errorf("source manifest file %q path %q name must be a scalar", fileID, pathID)
-			}
-			path.Name = valueNode.Value
-		case "path":
-			if valueNode.Kind != yaml.ScalarNode {
-				return SourceManifestPathEntry{}, fmt.Errorf("source manifest file %q path %q path must be a scalar", fileID, pathID)
-			}
-			path.Path = valueNode.Value
-		default:
-			return SourceManifestPathEntry{}, fmt.Errorf("unknown key %q", keyNode.Value)
-		}
-	}
-	return path, nil
-}
+var idPattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
 func LoadSourceManifestBytes(data []byte) (SourceManifest, error) {
 	var manifest SourceManifest
-	doc, err := parseStrictYAML(data, allowedSourceManifestKeys())
+	metadata, err := toml.Decode(string(data), &manifest)
 	if err != nil {
 		return manifest, fmt.Errorf("parse source manifest: %w", err)
 	}
-	if err := doc.Decode(&manifest); err != nil {
-		return manifest, fmt.Errorf("parse source manifest: %w", err)
+	if err := rejectUndecoded("source manifest", metadata.Undecoded()); err != nil {
+		return manifest, err
 	}
-	return manifest, validateSourceManifest(manifest, doc)
+	return manifest, validateSourceManifest(manifest)
 }
 
 func LoadTargetConfig(path string) (TargetConfig, error) {
@@ -100,22 +43,98 @@ func LoadTargetConfig(path string) (TargetConfig, error) {
 
 func LoadTargetConfigBytes(data []byte) (TargetConfig, error) {
 	var config TargetConfig
-	doc, err := parseStrictYAML(data, allowedTargetConfigKeys())
+	metadata, err := toml.Decode(string(data), &config)
 	if err != nil {
 		return config, fmt.Errorf("parse target config: %w", err)
 	}
-	if err := doc.Decode(&config); err != nil {
-		return config, fmt.Errorf("parse target config: %w", err)
+	if err := rejectUndecoded("target config", metadata.Undecoded()); err != nil {
+		return config, err
 	}
-	return config, validateTargetConfig(config, doc)
+	return config, validateTargetConfig(config)
 }
 
 func WriteTargetConfig(path string, config TargetConfig) error {
-	data, err := yaml.Marshal(config)
+	commit, cleanup, err := PrepareTargetConfigWrite(path, config)
 	if err != nil {
-		return fmt.Errorf("encode target config: %w", err)
+		return err
 	}
-	return os.WriteFile(path, data, 0o644)
+	defer cleanup()
+	return commit()
+}
+
+func PrepareTargetConfigWrite(path string, config TargetConfig) (func() error, func() error, error) {
+	if err := validateTargetConfig(config); err != nil {
+		return nil, nil, err
+	}
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, nil, fmt.Errorf("create target config directory: %w", err)
+	}
+	mode := os.FileMode(0o644)
+	if info, err := os.Stat(path); err == nil {
+		mode = info.Mode().Perm()
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, nil, fmt.Errorf("stat target config: %w", err)
+	}
+	temp, err := os.CreateTemp(dir, ".driftline-target-*.toml")
+	if err != nil {
+		return nil, nil, fmt.Errorf("create target config temp file: %w", err)
+	}
+	tempName := temp.Name()
+	cleanup := func() error {
+		err := os.Remove(tempName)
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	if _, err := temp.WriteString(FormatTargetConfig(config)); err != nil {
+		temp.Close()
+		cleanup()
+		return nil, nil, fmt.Errorf("write target config temp file: %w", err)
+	}
+	if err := temp.Chmod(mode); err != nil {
+		temp.Close()
+		cleanup()
+		return nil, nil, fmt.Errorf("chmod target config temp file: %w", err)
+	}
+	if err := temp.Close(); err != nil {
+		cleanup()
+		return nil, nil, fmt.Errorf("close target config temp file: %w", err)
+	}
+	commit := func() error {
+		return os.Rename(tempName, path)
+	}
+	return commit, cleanup, nil
+}
+
+func FormatTargetConfig(config TargetConfig) string {
+	var b strings.Builder
+	b.WriteString("version = 2\n\n")
+	b.WriteString("[source]\n")
+	b.WriteString("repository = ")
+	b.WriteString(strconv.Quote(config.Source.Repository))
+	b.WriteString("\n")
+	b.WriteString("ref = ")
+	b.WriteString(strconv.Quote(config.Source.Ref))
+	b.WriteString("\n")
+
+	for _, group := range sortedStringKeys(config.Files) {
+		files := config.Files[group]
+		if len(files) == 0 {
+			continue
+		}
+		b.WriteString("\n[files.")
+		b.WriteString(group)
+		b.WriteString("]\n")
+		for _, file := range sortedStringKeys(files) {
+			b.WriteString(file)
+			b.WriteString(" = ")
+			b.WriteString(strconv.Quote(files[file]))
+			b.WriteString("\n")
+		}
+	}
+	return b.String()
 }
 
 func TargetConfigFromSourceManifest(repository string, ref string, manifest SourceManifest) (TargetConfig, error) {
@@ -131,87 +150,149 @@ func TargetConfigFromSourceManifest(repository string, ref string, manifest Sour
 			Repository: repository,
 			Ref:        ref,
 		},
-		Files: make([]TargetConfigFile, 0, len(manifest.Files)),
+		Files: map[string]map[string]string{},
 	}
-	seenDefaultTargets := map[string]struct{}{}
-	for _, item := range manifest.Files {
-		for _, sourcePath := range item.Paths {
-			defaultTarget := normalizedConfigPath(sourcePath.Path)
-			if _, ok := seenDefaultTargets[defaultTarget]; ok {
-				return TargetConfig{}, fmt.Errorf("duplicate target %q", defaultTarget)
-			}
-			seenDefaultTargets[defaultTarget] = struct{}{}
+	for _, entry := range SourceEntries(manifest) {
+		if entry.Mode != ModeManaged {
+			continue
 		}
-		config.Files = append(config.Files, TargetConfigFile{ID: item.ID})
+		ensureTargetGroup(config.Files, entry.Group)[entry.File] = entry.Path
 	}
-	return config, nil
+	return config, validateTargetConfig(config)
 }
 
-func LoadLock(path string) (LockFile, bool, error) {
-	data, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return LockFile{Version: 1, Files: []LockItem{}}, false, nil
+func SourceEntries(manifest SourceManifest) []SourceEntry {
+	entries := []SourceEntry{}
+	for _, group := range sortedStringKeys(manifest.Files) {
+		for _, file := range sortedStringKeys(manifest.Files[group]) {
+			item := manifest.Files[group][file]
+			entries = append(entries, SourceEntry{
+				Group: group,
+				File:  file,
+				Key:   ConfigFileKey(group, file),
+				Path:  normalizedConfigPath(item.Path),
+				Mode:  item.Mode,
+			})
+		}
 	}
-	if err != nil {
-		return LockFile{}, false, fmt.Errorf("read lock file: %w", err)
-	}
-	lock, err := LoadLockBytes(data)
-	return lock, true, err
+	return entries
 }
 
-func LoadLockBytes(data []byte) (LockFile, error) {
-	var lock LockFile
-	doc, err := parseStrictYAML(data, allowedLockKeys())
-	if err != nil {
-		return lock, fmt.Errorf("parse lock file: %w", err)
+func TargetEntries(config TargetConfig) []TargetEntry {
+	entries := []TargetEntry{}
+	for _, group := range sortedStringKeys(config.Files) {
+		for _, file := range sortedStringKeys(config.Files[group]) {
+			entries = append(entries, TargetEntry{
+				Group: group,
+				File:  file,
+				Key:   ConfigFileKey(group, file),
+				Path:  normalizedConfigPath(config.Files[group][file]),
+			})
+		}
 	}
-	if err := doc.Decode(&lock); err != nil {
-		return lock, fmt.Errorf("parse lock file: %w", err)
-	}
-	return lock, validateLock(lock, doc)
+	return entries
 }
 
-func WriteLock(path string, lock LockFile) error {
-	data, err := yaml.Marshal(lock)
-	if err != nil {
-		return fmt.Errorf("encode lock file: %w", err)
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("create lock file directory: %w", err)
-	}
-	return os.WriteFile(path, data, 0o644)
+func ConfigFileKey(group string, file string) string {
+	return group + "." + file
 }
 
-func allowedSourceManifestKeys() map[string]map[string]struct{} {
-	return map[string]map[string]struct{}{
-		"":      set("version", "gitignore", "files"),
-		"files": set("id", "name", "paths"),
-		"paths": nil,
+func rejectUndecoded(label string, keys []toml.Key) error {
+	if len(keys) == 0 {
+		return nil
 	}
-}
-
-func allowedTargetConfigKeys() map[string]map[string]struct{} {
-	return map[string]map[string]struct{}{
-		"":               set("version", "source", "files"),
-		"source":         set("repository", "ref"),
-		"files":          set("id", "path_overrides", "if_not_exists"),
-		"path_overrides": nil,
-	}
-}
-
-func allowedLockKeys() map[string]map[string]struct{} {
-	return map[string]map[string]struct{}{
-		"":      set("version", "repository", "ref", "commit", "files"),
-		"files": set("id", "target_path"),
-	}
-}
-
-func set(keys ...string) map[string]struct{} {
-	out := map[string]struct{}{}
+	formatted := make([]string, 0, len(keys))
 	for _, key := range keys {
-		out[key] = struct{}{}
+		formatted = append(formatted, key.String())
 	}
-	return out
+	sort.Strings(formatted)
+	return fmt.Errorf("%s contains unknown key %q", label, formatted[0])
+}
+
+func validateSourceManifest(manifest SourceManifest) error {
+	if manifest.Version != 2 {
+		return fmt.Errorf("unsupported source manifest version %d", manifest.Version)
+	}
+	seenPaths := map[string]string{}
+	for group, files := range manifest.Files {
+		if err := validateConfigID(group, "source group"); err != nil {
+			return err
+		}
+		if len(files) == 0 {
+			return fmt.Errorf("source group %q must define files", group)
+		}
+		for file, item := range files {
+			key := ConfigFileKey(group, file)
+			if err := validateConfigID(file, "source file"); err != nil {
+				return err
+			}
+			if item.Path == "" {
+				return fmt.Errorf("source file %q must define path", key)
+			}
+			if err := ValidateConfigPath(item.Path, fmt.Sprintf("source file %q", key)); err != nil {
+				return err
+			}
+			normalized := normalizedConfigPath(item.Path)
+			if other, ok := seenPaths[normalized]; ok {
+				return fmt.Errorf("duplicate source path %q for %s and %s", normalized, other, key)
+			}
+			seenPaths[normalized] = key
+			switch item.Mode {
+			case ModeManaged, ModeTemplate:
+			case "":
+				return fmt.Errorf("source file %q must define mode", key)
+			default:
+				return fmt.Errorf("source file %q has invalid mode %q", key, item.Mode)
+			}
+		}
+	}
+	return nil
+}
+
+func validateTargetConfig(config TargetConfig) error {
+	if config.Version != 2 {
+		return fmt.Errorf("unsupported target config version %d", config.Version)
+	}
+	if err := ValidateRepository(config.Source.Repository); err != nil {
+		return err
+	}
+	if err := ValidateRef(config.Source.Ref); err != nil {
+		return err
+	}
+	seenTargets := map[string]string{}
+	for group, files := range config.Files {
+		if err := validateConfigID(group, "target group"); err != nil {
+			return err
+		}
+		if len(files) == 0 {
+			return fmt.Errorf("target group %q must define files", group)
+		}
+		for file, targetPath := range files {
+			key := ConfigFileKey(group, file)
+			if err := validateConfigID(file, "target file"); err != nil {
+				return err
+			}
+			if err := ValidateConfigPath(targetPath, fmt.Sprintf("target file %q", key)); err != nil {
+				return err
+			}
+			normalized := normalizedConfigPath(targetPath)
+			if IsReservedTargetPath(normalized) {
+				return fmt.Errorf("reserved target path %q", normalized)
+			}
+			if other, ok := seenTargets[normalized]; ok {
+				return fmt.Errorf("duplicate target path %q for %s and %s", normalized, other, key)
+			}
+			seenTargets[normalized] = key
+		}
+	}
+	return nil
+}
+
+func validateConfigID(id string, label string) error {
+	if !idPattern.MatchString(id) {
+		return fmt.Errorf("%s id is invalid: %q", label, id)
+	}
+	return nil
 }
 
 func ValidateRepository(repository string) error {
@@ -236,7 +317,7 @@ func ValidateConfigPath(path string, label string) error {
 	if path == "" || strings.TrimSpace(path) != path {
 		return fmt.Errorf("%s path is invalid: %q", label, path)
 	}
-	if strings.Contains(path, "\\") || strings.HasPrefix(path, "/") || path == "." {
+	if strings.Contains(path, "\\") || strings.HasPrefix(path, "/") || strings.HasSuffix(path, "/") || path == "." {
 		return fmt.Errorf("%s path is invalid: %q", label, path)
 	}
 	for _, part := range strings.Split(path, "/") {
@@ -247,242 +328,18 @@ func ValidateConfigPath(path string, label string) error {
 	return nil
 }
 
-func parseStrictYAML(data []byte, allowed map[string]map[string]struct{}) (*yaml.Node, error) {
-	var doc yaml.Node
-	if err := yaml.Unmarshal(data, &doc); err != nil {
-		return nil, err
+func ensureTargetGroup(files map[string]map[string]string, group string) map[string]string {
+	if files[group] == nil {
+		files[group] = map[string]string{}
 	}
-	root := documentRoot(&doc)
-	if root == nil || root.Kind != yaml.MappingNode {
-		return nil, errors.New("document must be a mapping")
-	}
-	if err := validateNodeKeys(root, "", allowed); err != nil {
-		return nil, err
-	}
-	return root, nil
+	return files[group]
 }
 
-func validateNodeKeys(node *yaml.Node, section string, allowed map[string]map[string]struct{}) error {
-	switch node.Kind {
-	case yaml.MappingNode:
-		seen := map[string]struct{}{}
-		allowedKeys, checkUnknown := allowed[section]
-		for i := 0; i < len(node.Content)-1; i += 2 {
-			keyNode := node.Content[i]
-			valueNode := node.Content[i+1]
-			key := keyNode.Value
-			if _, ok := seen[key]; ok {
-				return fmt.Errorf("duplicate key %q", key)
-			}
-			seen[key] = struct{}{}
-			if checkUnknown && allowedKeys != nil {
-				if _, ok := allowedKeys[key]; !ok {
-					return fmt.Errorf("unknown key %q", key)
-				}
-			}
-			nextSection := section
-			if _, ok := allowed[key]; ok {
-				nextSection = key
-			}
-			if err := validateNodeKeys(valueNode, nextSection, allowed); err != nil {
-				return err
-			}
-		}
-	case yaml.SequenceNode:
-		for _, item := range node.Content {
-			if err := validateNodeKeys(item, section, allowed); err != nil {
-				return err
-			}
-		}
+func sortedStringKeys[T any](values map[string]T) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
 	}
-	return nil
-}
-
-func validateSourceManifest(manifest SourceManifest, root *yaml.Node) error {
-	if manifest.Version != 2 {
-		return fmt.Errorf("unsupported source manifest version %d", manifest.Version)
-	}
-	if err := requireSequence(root, "files", "source manifest"); err != nil {
-		return err
-	}
-	seenIDs := map[string]struct{}{}
-	for _, item := range manifest.Files {
-		if strings.TrimSpace(item.ID) == "" {
-			return errors.New("source manifest contains file without id")
-		}
-		if _, ok := seenIDs[item.ID]; ok {
-			return fmt.Errorf("duplicate source manifest file id %q", item.ID)
-		}
-		seenIDs[item.ID] = struct{}{}
-		if len(item.Paths) == 0 {
-			return fmt.Errorf("source manifest file %q must define paths", item.ID)
-		}
-		seenPaths := map[string]struct{}{}
-		for _, sourcePath := range item.Paths {
-			if strings.TrimSpace(sourcePath.ID) == "" {
-				return fmt.Errorf("source manifest file %q contains path without id", item.ID)
-			}
-			if sourcePath.Path == "" {
-				return fmt.Errorf("source manifest file %q path %q must define path", item.ID, sourcePath.ID)
-			}
-			if err := ValidateConfigPath(sourcePath.Path, fmt.Sprintf("source %q path %q", item.ID, sourcePath.ID)); err != nil {
-				return err
-			}
-			normalized := normalizedConfigPath(sourcePath.Path)
-			if _, ok := seenPaths[normalized]; ok {
-				return fmt.Errorf("duplicate source path %q in source manifest file id %q", normalized, item.ID)
-			}
-			seenPaths[normalized] = struct{}{}
-		}
-	}
-	return nil
-}
-
-func validateTargetConfig(config TargetConfig, root *yaml.Node) error {
-	if config.Version != 2 {
-		return fmt.Errorf("unsupported target config version %d", config.Version)
-	}
-	if err := requireMapping(root, "source", "target config"); err != nil {
-		return err
-	}
-	if err := requireSequence(root, "files", "target config"); err != nil {
-		return err
-	}
-	if err := ValidateRepository(config.Source.Repository); err != nil {
-		return err
-	}
-	if err := ValidateRef(config.Source.Ref); err != nil {
-		return err
-	}
-	seen := map[string]struct{}{}
-	fileNodes := configSequenceItems(root, "files")
-	for i, item := range config.Files {
-		if strings.TrimSpace(item.ID) == "" {
-			return errors.New("target config contains file without id")
-		}
-		if _, ok := seen[item.ID]; ok {
-			return fmt.Errorf("duplicate target config file id %q", item.ID)
-		}
-		seen[item.ID] = struct{}{}
-		if i < len(fileNodes) && mappingHasKey(fileNodes[i], "path_overrides") {
-			overridesNode := configMappingValue(fileNodes[i], "path_overrides")
-			if overridesNode == nil || overridesNode.Kind != yaml.MappingNode {
-				return fmt.Errorf("target config file %q path_overrides must be a mapping", item.ID)
-			}
-			if len(item.PathOverrides) == 0 {
-				return fmt.Errorf("target config file %q path_overrides must not be empty", item.ID)
-			}
-		}
-		for pathID, targetPath := range item.PathOverrides {
-			if strings.TrimSpace(pathID) == "" {
-				return fmt.Errorf("target config file %q contains path override without id", item.ID)
-			}
-			if err := ValidateConfigPath(targetPath, fmt.Sprintf("target %q override %q", item.ID, pathID)); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-func validateLock(lock LockFile, root *yaml.Node) error {
-	if lock.Version != 1 {
-		return fmt.Errorf("unsupported lock file version %d", lock.Version)
-	}
-	if err := requireSequence(root, "files", "lock file"); err != nil {
-		return err
-	}
-	if err := ValidateRepository(lock.Repository); err != nil {
-		return err
-	}
-	if err := ValidateRef(lock.Ref); err != nil {
-		return err
-	}
-	if lock.Commit == "" {
-		return errors.New("lock file commit must not be empty")
-	}
-	seenIdentity := map[string]struct{}{}
-	seenTarget := map[string]struct{}{}
-	for _, item := range lock.Files {
-		if strings.TrimSpace(item.ID) == "" {
-			return errors.New("lock file contains item without id")
-		}
-		if err := ValidateConfigPath(item.TargetPath, fmt.Sprintf("target %q", item.ID)); err != nil {
-			return err
-		}
-		identity := item.ID + "\x00" + item.TargetPath
-		if _, ok := seenIdentity[identity]; ok {
-			return fmt.Errorf("duplicate lock item %q target %q", item.ID, item.TargetPath)
-		}
-		seenIdentity[identity] = struct{}{}
-		if _, ok := seenTarget[item.TargetPath]; ok {
-			return fmt.Errorf("duplicate target %q", item.TargetPath)
-		}
-		seenTarget[item.TargetPath] = struct{}{}
-	}
-	return nil
-}
-
-func requireMapping(root *yaml.Node, key string, label string) error {
-	node := configMappingValue(root, key)
-	if node == nil {
-		return fmt.Errorf("%s must define %s", label, key)
-	}
-	if node.Kind != yaml.MappingNode {
-		return fmt.Errorf("%s %s must be a mapping", label, key)
-	}
-	return nil
-}
-
-func requireSequence(root *yaml.Node, key string, label string) error {
-	node := configMappingValue(root, key)
-	if node == nil {
-		return fmt.Errorf("%s must define %s", label, key)
-	}
-	if node.Kind != yaml.SequenceNode {
-		return fmt.Errorf("%s %s must be a sequence", label, key)
-	}
-	return nil
-}
-
-func configSequenceItems(root *yaml.Node, key string) []*yaml.Node {
-	node := configMappingValue(root, key)
-	if node == nil || node.Kind != yaml.SequenceNode {
-		return nil
-	}
-	return node.Content
-}
-
-func mappingHasKey(node *yaml.Node, key string) bool {
-	if node == nil || node.Kind != yaml.MappingNode {
-		return false
-	}
-	for i := 0; i < len(node.Content)-1; i += 2 {
-		if node.Content[i].Value == key {
-			return true
-		}
-	}
-	return false
-}
-
-func configMappingValue(node *yaml.Node, key string) *yaml.Node {
-	if node.Kind == yaml.DocumentNode {
-		node = documentRoot(node)
-	}
-	if node == nil || node.Kind != yaml.MappingNode {
-		return nil
-	}
-	for i := 0; i < len(node.Content)-1; i += 2 {
-		if node.Content[i].Value == key {
-			return node.Content[i+1]
-		}
-	}
-	return nil
-}
-
-func documentRoot(doc *yaml.Node) *yaml.Node {
-	if doc.Kind == yaml.DocumentNode && len(doc.Content) > 0 {
-		return doc.Content[0]
-	}
-	return doc
+	sort.Strings(keys)
+	return keys
 }

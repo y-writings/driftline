@@ -1,13 +1,18 @@
 package driftline
 
 import (
+	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
+	"strings"
+	"syscall"
 )
 
 type PlanOptions struct {
 	TargetDir string
 	Source    SourceClient
+	ForceKey  string
 }
 
 type Plan struct {
@@ -16,20 +21,17 @@ type Plan struct {
 	Commit     string
 	Config     TargetConfig
 	Manifest   SourceManifest
-	Lock       LockFile
-	HadLock    bool
 	Changes    []Change
-	NextLock   LockFile
-	GitIgnore  []string
+	NextConfig TargetConfig
 }
 
-func (p Plan) NextLockItem(id string, target string) LockItem {
-	for _, item := range p.NextLock.Files {
-		if item.ID == id && item.TargetPath == target {
-			return item
+func (p Plan) HasConflicts() bool {
+	for _, change := range p.Changes {
+		if change.Status == StatusConflict {
+			return true
 		}
 	}
-	return LockItem{}
+	return false
 }
 
 func BuildPlan(opts PlanOptions) (Plan, error) {
@@ -39,9 +41,13 @@ func BuildPlan(opts PlanOptions) (Plan, error) {
 	if opts.Source == nil {
 		return Plan{}, fmt.Errorf("source client is required")
 	}
+	if opts.ForceKey != "" {
+		if err := validateForceKey(opts.ForceKey); err != nil {
+			return Plan{}, err
+		}
+	}
 
 	configPath := filepath.Join(opts.TargetDir, TargetConfigPath)
-	lockPath := filepath.Join(opts.TargetDir, LockFilePath)
 	config, err := LoadTargetConfig(configPath)
 	if err != nil {
 		return Plan{}, err
@@ -52,18 +58,14 @@ func BuildPlan(opts PlanOptions) (Plan, error) {
 	}
 	manifestBytes, err := opts.Source.ReadFile(config.Source.Repository, commit, SourceManifestPath)
 	if err != nil {
-		return Plan{}, fmt.Errorf(".driftline-source.yaml not found in source repository: %w", err)
+		return Plan{}, fmt.Errorf(".driftline-source.toml not found in source repository: %w", err)
 	}
 	manifest, err := LoadSourceManifestBytes(manifestBytes)
 	if err != nil {
 		return Plan{}, err
 	}
-	lock, hadLock, err := LoadLock(lockPath)
-	if err != nil {
-		return Plan{}, err
-	}
 
-	builder := planBuilder{opts: opts, config: config, manifest: manifest, lock: lock, hadLock: hadLock, commit: commit}
+	builder := planBuilder{opts: opts, config: config, manifest: manifest, commit: commit}
 	return builder.build()
 }
 
@@ -71,25 +73,35 @@ type planBuilder struct {
 	opts     PlanOptions
 	config   TargetConfig
 	manifest SourceManifest
-	lock     LockFile
-	hadLock  bool
 	commit   string
 }
 
-type resolvedFile struct {
-	id          string
-	source      string
-	target      string
-	ifNotExists bool
+type resolvedManagedFile struct {
+	SourceEntry
+	target     string
+	declared   bool
+	staleOwner string
 }
 
 func (b planBuilder) build() (Plan, error) {
-	manifestByID := map[string]SourceManifestFile{}
-	for _, item := range b.manifest.Files {
-		manifestByID[item.ID] = item
+	sourceByKey := map[string]SourceEntry{}
+	desiredManagedKeys := map[string]struct{}{}
+	managed := []SourceEntry{}
+	for _, entry := range SourceEntries(b.manifest) {
+		sourceByKey[entry.Key] = entry
+		if entry.Mode == ModeManaged {
+			managed = append(managed, entry)
+			desiredManagedKeys[entry.Key] = struct{}{}
+		}
 	}
 
-	activeTargets := map[string]struct{}{}
+	targetByKey := map[string]TargetEntry{}
+	declaredTargets := map[string]string{}
+	for _, entry := range TargetEntries(b.config) {
+		targetByKey[entry.Key] = entry
+		declaredTargets[entry.Path] = entry.Key
+	}
+	staleDeleteTargets := staleDeleteTargetPaths(b.config, sourceByKey)
 
 	plan := Plan{
 		Repository: b.config.Source.Repository,
@@ -97,114 +109,155 @@ func (b planBuilder) build() (Plan, error) {
 		Commit:     b.commit,
 		Config:     b.config,
 		Manifest:   b.manifest,
-		Lock:       b.lock,
-		HadLock:    b.hadLock,
-		GitIgnore:  b.manifest.GitIgnore,
-		NextLock: LockFile{
-			Version:    1,
-			Repository: b.config.Source.Repository,
-			Ref:        b.config.Source.Ref,
-			Commit:     b.commit,
-			Files:      []LockItem{},
+		NextConfig: TargetConfig{
+			Version: b.config.Version,
+			Source:  b.config.Source,
+			Files:   map[string]map[string]string{},
 		},
 	}
 
-	if !b.hadLock {
-		plan.Changes = append(plan.Changes, Change{ID: "lock", Status: StatusUpdate, Reason: "lock file is missing"})
-	} else if b.lock.Repository != b.config.Source.Repository || b.lock.Ref != b.config.Source.Ref || b.lock.Commit != b.commit {
-		plan.Changes = append(plan.Changes, Change{ID: "lock", Status: StatusUpdate, Reason: "source commit changed to " + b.commit})
-	}
-
-	resolvedFiles := make([]resolvedFile, 0, len(b.config.Files))
-	for _, configured := range b.config.Files {
-		manifestItem, ok := manifestByID[configured.ID]
-		if !ok {
-			return Plan{}, fmt.Errorf("unknown source file id %q", configured.ID)
+	usedTargets := map[string]string{}
+	forceMatched := b.opts.ForceKey == ""
+	for _, entry := range managed {
+		if entry.Key == b.opts.ForceKey {
+			forceMatched = true
 		}
-		resolvedForID, err := resolveTargetConfigFile(configured, manifestItem)
-		if err != nil {
-			return Plan{}, err
+		resolved := resolvedManagedFile{SourceEntry: entry, target: entry.Path}
+		if target, ok := targetByKey[entry.Key]; ok {
+			resolved.target = target.Path
+			resolved.declared = true
 		}
-		for _, resolved := range resolvedForID {
-			if isReservedTargetPath(resolved.target) {
-				return Plan{}, fmt.Errorf("reserved target path %q", resolved.target)
-			}
-			if _, ok := activeTargets[resolved.target]; ok {
-				return Plan{}, fmt.Errorf("duplicate target %q", resolved.target)
-			}
-			activeTargets[resolved.target] = struct{}{}
-			resolvedFiles = append(resolvedFiles, resolved)
+		if IsReservedTargetPath(resolved.target) {
+			return Plan{}, fmt.Errorf("reserved target path %q", resolved.target)
 		}
-	}
-
-	for _, resolved := range resolvedFiles {
-		sourceBytes, err := b.opts.Source.ReadFile(b.config.Source.Repository, b.commit, resolved.source)
-		if err != nil {
-			return Plan{}, fmt.Errorf("source file not found in source repository: %w", err)
-		}
-		sourceHash := HashBytes(sourceBytes)
-		targetPath, err := PathWithin(b.opts.TargetDir, resolved.target, fmt.Sprintf("target %q", resolved.id))
-		if err != nil {
-			return Plan{}, err
-		}
-		currentHash, targetExists, err := FileHash(targetPath)
-		if err != nil {
-			return Plan{}, fmt.Errorf("hash target %s: %w", resolved.target, err)
-		}
-
-		change := activeChange(resolved, sourceBytes, sourceHash, targetPath, currentHash, targetExists)
-		plan.NextLock.Files = append(plan.NextLock.Files, nextActiveLockItem(resolved))
-		plan.Changes = append(plan.Changes, change)
-	}
-
-	for _, item := range b.lock.Files {
-		if _, ok := activeTargets[normalizedConfigPath(item.TargetPath)]; ok {
+		if other, ok := usedTargets[resolved.target]; ok {
+			plan.Changes = append(plan.Changes, conflictChange(resolved, "target already declared by "+other, false))
 			continue
 		}
-		plan.NextLock.Files = append(plan.NextLock.Files, item)
-		change, err := b.staleChange(item)
+		if other, ok := overlappingManagedTarget(resolved.target, usedTargets); ok {
+			plan.Changes = append(plan.Changes, conflictChange(resolved, "target overlaps with "+other, false))
+			continue
+		}
+		if other, ok := declaredTargets[resolved.target]; ok && other != resolved.Key {
+			if _, desired := desiredManagedKeys[other]; desired {
+				plan.Changes = append(plan.Changes, conflictChange(resolved, "target already declared by "+other, false))
+				continue
+			}
+			resolved.staleOwner = other
+		}
+		usedTargets[resolved.target] = resolved.Key
+		if err := b.addManagedChange(&plan, resolved, staleDeleteTargets); err != nil {
+			return Plan{}, err
+		}
+	}
+	if !forceMatched {
+		return Plan{}, fmt.Errorf("force key %q does not match a managed source file", b.opts.ForceKey)
+	}
+
+	for _, target := range TargetEntries(b.config) {
+		if owner, ok := usedTargets[target.Path]; ok {
+			if owner != target.Key {
+				plan.Changes = append(plan.Changes, targetConfigRemoveChange(target))
+			}
+			continue
+		}
+		source, existsInSource := sourceByKey[target.Key]
+		if existsInSource && source.Mode == ModeTemplate {
+			plan.Changes = append(plan.Changes, Change{
+				ID:     target.Key,
+				Target: target.Path,
+				Status: StatusModeTransition,
+				Reason: "source mode changed from managed to template",
+			})
+			plan.Changes = append(plan.Changes, targetConfigRemoveChange(target))
+			continue
+		}
+		fullPath, err := PathWithin(b.opts.TargetDir, target.Path, fmt.Sprintf("target %q", target.Key))
 		if err != nil {
 			return Plan{}, err
 		}
-		plan.Changes = append(plan.Changes, change)
+		plan.Changes = append(plan.Changes, Change{
+			ID:            target.Key,
+			Target:        target.Path,
+			TargetPath:    fullPath,
+			Status:        StatusRemove,
+			Reason:        "managed file removed from source config",
+			DeletesTarget: true,
+		})
+		plan.Changes = append(plan.Changes, targetConfigRemoveChange(target))
 	}
 
+	if len(plan.Changes) == 0 {
+		plan.Changes = append(plan.Changes, Change{Status: StatusSynced})
+	}
 	return plan, nil
 }
 
-func resolveTargetConfigFile(configured TargetConfigFile, manifestItem SourceManifestFile) ([]resolvedFile, error) {
-	ifNotExists := configured.IfNotExists
-
-	sourcePaths := map[string]struct{}{}
-	for _, sourcePath := range manifestItem.Paths {
-		sourcePaths[sourcePath.ID] = struct{}{}
+func (b planBuilder) addManagedChange(plan *Plan, file resolvedManagedFile, staleDeleteTargets map[string]struct{}) error {
+	targetPath, err := PathWithin(b.opts.TargetDir, file.target, fmt.Sprintf("target %q", file.Key))
+	if err != nil {
+		return err
 	}
-
-	overrides := map[string]string{}
-	for pathID, targetPath := range configured.PathOverrides {
-		if _, ok := sourcePaths[pathID]; !ok {
-			return nil, fmt.Errorf("target config file id %q path override %q does not match a source path id", configured.ID, pathID)
+	currentHash := ""
+	targetExists := false
+	blockedByStaleFile, err := b.targetBlockedByStaleFileAncestor(file.target, staleDeleteTargets)
+	if err != nil {
+		return err
+	}
+	if !blockedByStaleFile {
+		info, err := os.Lstat(targetPath)
+		if err != nil {
+			if errors.Is(err, syscall.ENOTDIR) {
+				plan.Changes = append(plan.Changes, conflictChange(file, "target already exists", false))
+				return nil
+			}
+			if !errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("stat target %s: %w", file.target, err)
+			}
+		} else if info.Mode()&os.ModeSymlink != 0 {
+			plan.Changes = append(plan.Changes, conflictChange(file, "target already exists", false))
+			return nil
+		} else if info.IsDir() {
+			if !file.declared {
+				plan.Changes = append(plan.Changes, conflictChange(file, "target already exists", false))
+				return nil
+			}
+			return fmt.Errorf("target %s is a directory", file.target)
+		} else {
+			targetExists = true
 		}
-		overrides[pathID] = normalizedConfigPath(targetPath)
 	}
-
-	resolved := make([]resolvedFile, 0, len(manifestItem.Paths))
-	for _, sourcePath := range manifestItem.Paths {
-		source := normalizedConfigPath(sourcePath.Path)
-		target := source
-		if overrideTarget, ok := overrides[sourcePath.ID]; ok {
-			target = overrideTarget
+	if targetExists {
+		currentHash, _, err = FileHash(targetPath)
+		if err != nil {
+			return fmt.Errorf("hash target %s: %w", file.target, err)
 		}
-		resolved = append(resolved, resolvedFile{id: configured.ID, source: source, target: target, ifNotExists: ifNotExists})
 	}
-	return resolved, nil
-}
+	if !file.declared && targetExists && b.opts.ForceKey != file.Key {
+		plan.Changes = append(plan.Changes, conflictChange(file, "target already exists", true))
+		return nil
+	}
 
-func activeChange(file resolvedFile, sourceBytes []byte, sourceHash string, targetPath string, currentHash string, targetExists bool) Change {
+	ensureTargetGroup(plan.NextConfig.Files, file.Group)[file.File] = file.target
+	if !file.declared {
+		plan.Changes = append(plan.Changes, Change{
+			ID:     file.Key,
+			Target: file.target,
+			Status: StatusTargetConfigAdd,
+			Reason: "add target config entry",
+		})
+	}
+
+	sourceBytes, err := b.opts.Source.ReadFile(b.config.Source.Repository, b.commit, file.Path)
+	if err != nil {
+		return fmt.Errorf("source file not found in source repository: %w", err)
+	}
+	sourceHash := HashBytes(sourceBytes)
 	change := Change{
-		ID:          file.id,
+		ID:          file.Key,
 		Target:      file.target,
 		TargetPath:  targetPath,
+		SourcePath:  file.Path,
 		SourceBytes: sourceBytes,
 		Status:      StatusSynced,
 	}
@@ -213,41 +266,102 @@ func activeChange(file resolvedFile, sourceBytes []byte, sourceHash string, targ
 		change.Status = StatusAdd
 		change.Reason = "target file is missing"
 		change.WritesTarget = true
-	case file.ifNotExists:
-		// Existing if_not_exists targets are intentionally left untouched.
 	case currentHash != sourceHash:
 		change.Status = StatusUpdate
 		change.Reason = "target differs from source"
 		change.WritesTarget = true
 	}
-	return change
+	plan.Changes = append(plan.Changes, change)
+	return nil
 }
 
-func nextActiveLockItem(file resolvedFile) LockItem {
-	return LockItem{
-		ID:         file.id,
-		TargetPath: file.target,
+func staleDeleteTargetPaths(config TargetConfig, sourceByKey map[string]SourceEntry) map[string]struct{} {
+	targets := map[string]struct{}{}
+	for _, target := range TargetEntries(config) {
+		if _, ok := sourceByKey[target.Key]; !ok {
+			targets[target.Path] = struct{}{}
+		}
+	}
+	return targets
+}
+
+func (b planBuilder) targetBlockedByStaleFileAncestor(target string, staleDeleteTargets map[string]struct{}) (bool, error) {
+	for staleTarget := range staleDeleteTargets {
+		if !isPathAncestor(staleTarget, target) {
+			continue
+		}
+		fullPath, err := PathWithin(b.opts.TargetDir, staleTarget, fmt.Sprintf("stale target %q", staleTarget))
+		if err != nil {
+			return false, err
+		}
+		info, err := os.Stat(fullPath)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if errors.Is(err, syscall.ENOTDIR) {
+			continue
+		}
+		if err != nil {
+			return false, fmt.Errorf("stat stale target %s: %w", staleTarget, err)
+		}
+		if !info.IsDir() {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func isPathAncestor(parent string, child string) bool {
+	parent = normalizedConfigPath(parent)
+	child = normalizedConfigPath(child)
+	return parent != child && strings.HasPrefix(child, parent+"/")
+}
+
+func overlappingManagedTarget(target string, usedTargets map[string]string) (string, bool) {
+	for _, usedTarget := range sortedStringKeys(usedTargets) {
+		if isPathAncestor(usedTarget, target) || isPathAncestor(target, usedTarget) {
+			return usedTargets[usedTarget], true
+		}
+	}
+	return "", false
+}
+
+func conflictChange(file resolvedManagedFile, reason string, forceAllowed bool) Change {
+	return Change{
+		ID:           file.Key,
+		Target:       file.target,
+		Status:       StatusConflict,
+		Reason:       reason,
+		ForceAllowed: forceAllowed,
 	}
 }
 
-func (b planBuilder) staleChange(item LockItem) (Change, error) {
-	targetPath, err := PathWithin(b.opts.TargetDir, item.TargetPath, fmt.Sprintf("locked target %q", item.ID))
-	if err != nil {
-		return Change{}, err
+func targetConfigRemoveChange(target TargetEntry) Change {
+	return Change{
+		ID:     target.Key,
+		Target: target.Path,
+		Status: StatusTargetConfigRemove,
+		Reason: "remove target config entry",
 	}
-	change := Change{
-		ID:         item.ID,
-		Target:     item.TargetPath,
-		TargetPath: targetPath,
-		Status:     StatusPrune,
-		Reason:     "target is no longer adopted",
-	}
-	return change, nil
 }
 
-func isReservedTargetPath(target string) bool {
+func validateForceKey(key string) error {
+	group, file, ok := strings.Cut(key, ".")
+	if !ok || strings.Contains(file, ".") {
+		return fmt.Errorf("force key must be <group.file>: %q", key)
+	}
+	if err := validateConfigID(group, "force group"); err != nil {
+		return err
+	}
+	if err := validateConfigID(file, "force file"); err != nil {
+		return err
+	}
+	return nil
+}
+
+func IsReservedTargetPath(target string) bool {
 	target = normalizedConfigPath(target)
-	return target == TargetConfigPath || target == LockFilePath
+	return target == TargetConfigPath || target == removedLockPath
 }
 
 func normalizedConfigPath(path string) string {

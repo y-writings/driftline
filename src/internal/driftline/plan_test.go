@@ -34,317 +34,478 @@ func (f fakeSourceClient) ReadFile(repository string, commit string, path string
 	return data, nil
 }
 
-func TestBuildPlanDetectsMissingLockAndAdd(t *testing.T) {
+func TestBuildPlanAddsMissingManagedEntryAndTargetFile(t *testing.T) {
 	targetDir := t.TempDir()
-	writePlanFile(t, targetDir, ".driftline-target.yaml", "version: 2\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: sample\n")
+	writePlanFile(t, targetDir, TargetConfigPath, targetConfigTOML(""))
+	client := newPlanSourceClient(`version = 2
 
-	client := fakeSourceClient{
-		refs: map[string]string{"y-writings/source-repo@main": "0123456789abcdef0123456789abcdef01234567"},
-		files: map[string][]byte{
-			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:.driftline-source.yaml": []byte("version: 2\nfiles:\n  - id: sample\n    paths:\n      sample:\n        path: sample.txt\n"),
-			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:sample.txt":             []byte("hello\n"),
-		},
-	}
-
-	plan, err := BuildPlan(PlanOptions{TargetDir: targetDir, Source: client})
-	if err != nil {
-		t.Fatalf("build plan failed: %v", err)
-	}
-	if item := plan.NextLockItem("sample", "sample.txt"); item.TargetPath != "sample.txt" {
-		t.Fatalf("expected omitted target config to default to source path, got %#v", item)
-	}
-	assertPlanHasChange(t, plan, StatusUpdate, "lock", "lock file is missing")
-	assertPlanHasChange(t, plan, StatusAdd, "sample", "target file is missing")
-}
-
-func TestBuildPlanPreservesIfNotExistsTargetWithoutHashMetadata(t *testing.T) {
-	targetDir := t.TempDir()
-	writePlanFile(t, targetDir, ".driftline-target.yaml", "version: 2\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: local-config\n    path_overrides:\n      config: config.local\n    if_not_exists: true\n")
-	writePlanFile(t, targetDir, "config.local", "edited-local\n")
-	writePlanFile(t, targetDir, "driftline-lock.yaml", "version: 1\nrepository: y-writings/source-repo\nref: main\ncommit: oldoldoldoldoldoldoldoldoldoldoldoldoldoldoldold\nfiles:\n  - id: local-config\n    target_path: config.local\n")
-
-	client := fakeSourceClient{
-		refs: map[string]string{"y-writings/source-repo@main": "0123456789abcdef0123456789abcdef01234567"},
-		files: map[string][]byte{
-			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:.driftline-source.yaml": []byte("version: 2\nfiles:\n  - id: local-config\n    paths:\n      config:\n        path: templates/config.local\n"),
-			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:templates/config.local": []byte("from-source\n"),
-		},
-	}
-
-	plan, err := BuildPlan(PlanOptions{TargetDir: targetDir, Source: client})
-	if err != nil {
-		t.Fatalf("build plan failed: %v", err)
-	}
-	if item := plan.NextLockItem("local-config", "config.local"); item.TargetPath != "config.local" {
-		t.Fatalf("expected existing target to remain locked by identity, got %#v", item)
-	}
-	assertPlanHasChange(t, plan, StatusUpdate, "lock", "source commit changed")
-	assertPlanDoesNotHaveChange(t, plan, StatusUpdate, "local-config")
-}
-
-func TestBuildPlanReportsManagedTargetEditAsDriftWithoutHashMetadata(t *testing.T) {
-	targetDir := t.TempDir()
-	writePlanFile(t, targetDir, ".driftline-target.yaml", "version: 2\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: sample\n")
-	writePlanFile(t, targetDir, "sample.txt", "edited-local\n")
-	writePlanFile(t, targetDir, "driftline-lock.yaml", "version: 1\nrepository: y-writings/source-repo\nref: main\ncommit: 0123456789abcdef0123456789abcdef01234567\nfiles:\n  - id: sample\n    target_path: sample.txt\n")
-
-	client := fakeSourceClient{
-		refs: map[string]string{"y-writings/source-repo@main": "0123456789abcdef0123456789abcdef01234567"},
-		files: map[string][]byte{
-			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:.driftline-source.yaml": []byte("version: 2\nfiles:\n  - id: sample\n    paths:\n      sample:\n        path: sample.txt\n"),
-			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:sample.txt":             []byte("from-source\n"),
-		},
-	}
+[files.github-workflow]
+ci = { path = ".github/workflows/ci.yaml", mode = "managed" }
+`, map[string]string{".github/workflows/ci.yaml": "ci\n"})
 
 	plan, err := BuildPlan(PlanOptions{TargetDir: targetDir, Source: client})
 	if err != nil {
 		t.Fatalf("build plan failed: %v", err)
 	}
 
-	change := planChange(t, plan, StatusUpdate, "sample")
-	if !change.WritesTarget || !strings.Contains(change.Reason, "target differs from source") {
-		t.Fatalf("expected managed target edit to be overwritten from source, got %#v", change)
+	assertPlanHasChange(t, plan, StatusTargetConfigAdd, "github-workflow.ci", "add target config entry")
+	change := planChange(t, plan, StatusAdd, "github-workflow.ci")
+	if !change.WritesTarget || change.Target != ".github/workflows/ci.yaml" || string(change.SourceBytes) != "ci\n" {
+		t.Fatalf("unexpected add change: %#v", change)
+	}
+	if got := plan.NextConfig.Files["github-workflow"]["ci"]; got != ".github/workflows/ci.yaml" {
+		t.Fatalf("missing next target config entry: %#v", plan.NextConfig.Files)
 	}
 }
 
-func TestBuildPlanLeavesOldTargetAsPruneCandidateWhenDefaultSourcePathChanges(t *testing.T) {
+func TestBuildPlanUpdatesDeclaredManagedTarget(t *testing.T) {
 	targetDir := t.TempDir()
-	writePlanFile(t, targetDir, ".driftline-target.yaml", "version: 2\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: sample\n")
-	writePlanFile(t, targetDir, "old.txt", "old\n")
-	writePlanFile(t, targetDir, "driftline-lock.yaml", "version: 1\nrepository: y-writings/source-repo\nref: main\ncommit: oldoldoldoldoldoldoldoldoldoldoldoldoldoldoldold\nfiles:\n  - id: sample\n    target_path: old.txt\n")
+	writePlanFile(t, targetDir, TargetConfigPath, targetConfigTOML(`[files.github-workflow]
+ci = ".github/workflows/project-ci.yaml"
+`))
+	writePlanFile(t, targetDir, ".github/workflows/project-ci.yaml", "old\n")
+	client := newPlanSourceClient(`version = 2
 
-	client := fakeSourceClient{
-		refs: map[string]string{"y-writings/source-repo@main": "0123456789abcdef0123456789abcdef01234567"},
-		files: map[string][]byte{
-			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:.driftline-source.yaml": []byte("version: 2\nfiles:\n  - id: sample\n    paths:\n      sample:\n        path: new.txt\n"),
-			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:new.txt":                []byte("new\n"),
-		},
-	}
+[files.github-workflow]
+ci = { path = ".github/workflows/ci.yaml", mode = "managed" }
+`, map[string]string{".github/workflows/ci.yaml": "new\n"})
 
 	plan, err := BuildPlan(PlanOptions{TargetDir: targetDir, Source: client})
 	if err != nil {
 		t.Fatalf("build plan failed: %v", err)
 	}
-	assertPlanHasChange(t, plan, StatusAdd, "sample", "target file is missing")
-	assertPlanHasChange(t, plan, StatusPrune, "sample", "target is no longer adopted")
+
+	change := planChange(t, plan, StatusUpdate, "github-workflow.ci")
+	if !change.WritesTarget || change.Target != ".github/workflows/project-ci.yaml" || string(change.SourceBytes) != "new\n" {
+		t.Fatalf("unexpected update change: %#v", change)
+	}
+	assertPlanDoesNotHaveChange(t, plan, StatusTargetConfigAdd, "github-workflow.ci")
 }
 
-func TestBuildPlanExpandsFileSetToMultipleDefaultTargets(t *testing.T) {
+func TestBuildPlanRemovesManagedFileAbsentFromSource(t *testing.T) {
 	targetDir := t.TempDir()
-	writePlanFile(t, targetDir, ".driftline-target.yaml", "version: 2\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: github-workflow\n")
-
-	client := fakeSourceClient{
-		refs: map[string]string{"y-writings/source-repo@main": "0123456789abcdef0123456789abcdef01234567"},
-		files: map[string][]byte{
-			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:.driftline-source.yaml":         []byte("version: 2\nfiles:\n  - id: github-workflow\n    paths:\n      ci:\n        name: CI workflow\n        path: .github/workflows/ci.yaml\n      release:\n        name: Release workflow\n        path: .github/workflows/release.yaml\n"),
-			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:.github/workflows/ci.yaml":      []byte("ci\n"),
-			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:.github/workflows/release.yaml": []byte("release\n"),
-		},
-	}
+	writePlanFile(t, targetDir, TargetConfigPath, targetConfigTOML(`[files.github-workflow]
+ci = ".github/workflows/ci.yaml"
+`))
+	writePlanFile(t, targetDir, ".github/workflows/ci.yaml", "old\n")
+	client := newPlanSourceClient(`version = 2
+`, nil)
 
 	plan, err := BuildPlan(PlanOptions{TargetDir: targetDir, Source: client})
 	if err != nil {
 		t.Fatalf("build plan failed: %v", err)
 	}
-	if item := plan.NextLockItem("github-workflow", ".github/workflows/ci.yaml"); item.TargetPath != ".github/workflows/ci.yaml" {
-		t.Fatalf("expected ci workflow lock item, got %#v", item)
+
+	remove := planChange(t, plan, StatusRemove, "github-workflow.ci")
+	if !remove.DeletesTarget || remove.Target != ".github/workflows/ci.yaml" {
+		t.Fatalf("unexpected remove change: %#v", remove)
 	}
-	if item := plan.NextLockItem("github-workflow", ".github/workflows/release.yaml"); item.TargetPath != ".github/workflows/release.yaml" {
-		t.Fatalf("expected release workflow lock item, got %#v", item)
-	}
-	assertPlanHasChange(t, plan, StatusAdd, "github-workflow", "target file is missing")
-	if got := countChanges(plan, StatusAdd, "github-workflow"); got != 2 {
-		t.Fatalf("expected two add changes for github-workflow, got %d in %#v", got, plan.Changes)
+	assertPlanHasChange(t, plan, StatusTargetConfigRemove, "github-workflow.ci", "remove target config entry")
+	if _, ok := plan.NextConfig.Files["github-workflow"]; ok {
+		t.Fatalf("empty group should be removed from next config: %#v", plan.NextConfig.Files)
 	}
 }
 
-func TestBuildPlanAppliesPathOverridesInsideFileSet(t *testing.T) {
+func TestBuildPlanManagedToTemplateRemovesConfigAndLeavesTargetFile(t *testing.T) {
 	targetDir := t.TempDir()
-	writePlanFile(t, targetDir, ".driftline-target.yaml", "version: 2\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: github-workflow\n    path_overrides:\n      ci: .github/workflows/project-ci.yaml\n")
+	writePlanFile(t, targetDir, TargetConfigPath, targetConfigTOML(`[files.github-workflow]
+release = ".github/workflows/release.yaml"
+`))
+	writePlanFile(t, targetDir, ".github/workflows/release.yaml", "target-owned\n")
+	client := newPlanSourceClient(`version = 2
 
-	client := fakeSourceClient{
-		refs: map[string]string{"y-writings/source-repo@main": "0123456789abcdef0123456789abcdef01234567"},
-		files: map[string][]byte{
-			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:.driftline-source.yaml":         []byte("version: 2\nfiles:\n  - id: github-workflow\n    paths:\n      ci:\n        path: .github/workflows/ci.yaml\n      release:\n        path: .github/workflows/release.yaml\n"),
-			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:.github/workflows/ci.yaml":      []byte("ci\n"),
-			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:.github/workflows/release.yaml": []byte("release\n"),
-		},
-	}
+[files.github-workflow]
+release = { path = ".github/workflows/release.yaml", mode = "template" }
+`, map[string]string{".github/workflows/release.yaml": "source\n"})
 
 	plan, err := BuildPlan(PlanOptions{TargetDir: targetDir, Source: client})
 	if err != nil {
 		t.Fatalf("build plan failed: %v", err)
 	}
-	if item := plan.NextLockItem("github-workflow", ".github/workflows/project-ci.yaml"); item.TargetPath != ".github/workflows/project-ci.yaml" {
-		t.Fatalf("expected overridden ci workflow lock item, got %#v", item)
+
+	transition := planChange(t, plan, StatusModeTransition, "github-workflow.release")
+	if transition.DeletesTarget || transition.WritesTarget {
+		t.Fatalf("managed-to-template must leave target file untouched: %#v", transition)
 	}
-	if item := plan.NextLockItem("github-workflow", ".github/workflows/release.yaml"); item.TargetPath != ".github/workflows/release.yaml" {
-		t.Fatalf("expected default release workflow lock item, got %#v", item)
-	}
+	assertPlanHasChange(t, plan, StatusTargetConfigRemove, "github-workflow.release", "remove target config entry")
+	assertPlanDoesNotHaveChange(t, plan, StatusRemove, "github-workflow.release")
 }
 
-func TestBuildPlanRejectsUnknownPathOverrideSource(t *testing.T) {
+func TestBuildPlanTemplateToManagedConflictsWhenTargetExists(t *testing.T) {
 	targetDir := t.TempDir()
-	writePlanFile(t, targetDir, ".driftline-target.yaml", "version: 2\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: sample\n    path_overrides:\n      missing: custom.txt\n")
-	client := fakeSourceClient{
-		refs:  map[string]string{"y-writings/source-repo@main": "0123456789abcdef0123456789abcdef01234567"},
-		files: map[string][]byte{"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:.driftline-source.yaml": []byte("version: 2\nfiles:\n  - id: sample\n    paths:\n      sample:\n        path: sample.txt\n")},
-	}
-	_, err := BuildPlan(PlanOptions{TargetDir: targetDir, Source: client})
-	if err == nil || !strings.Contains(err.Error(), "path override") || !strings.Contains(err.Error(), "missing") {
-		t.Fatalf("expected unknown path override error, got %v", err)
-	}
-}
+	writePlanFile(t, targetDir, TargetConfigPath, targetConfigTOML(""))
+	writePlanFile(t, targetDir, ".github/workflows/ci.yaml", "target-owned\n")
+	client := newPlanSourceClient(`version = 2
 
-func TestBuildPlanReadsNormalizedSourcePaths(t *testing.T) {
-	targetDir := t.TempDir()
-	writePlanFile(t, targetDir, ".driftline-target.yaml", "version: 2\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: sample\n")
-	client := fakeSourceClient{
-		refs: map[string]string{"y-writings/source-repo@main": "0123456789abcdef0123456789abcdef01234567"},
-		files: map[string][]byte{
-			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:.driftline-source.yaml": []byte("version: 2\nfiles:\n  - id: sample\n    paths:\n      sample:\n        path: ./sample.txt\n"),
-			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:sample.txt":             []byte("hello\n"),
-		},
-	}
+[files.github-workflow]
+ci = { path = ".github/workflows/ci.yaml", mode = "managed" }
+`, map[string]string{".github/workflows/ci.yaml": "source\n"})
+
 	plan, err := BuildPlan(PlanOptions{TargetDir: targetDir, Source: client})
 	if err != nil {
 		t.Fatalf("build plan failed: %v", err)
 	}
-	if item := plan.NextLockItem("sample", "sample.txt"); item.TargetPath != "sample.txt" {
-		t.Fatalf("expected normalized target lock item, got %#v", item)
+
+	conflict := planChange(t, plan, StatusConflict, "github-workflow.ci")
+	if conflict.Target != ".github/workflows/ci.yaml" || !strings.Contains(conflict.Reason, "target already exists") {
+		t.Fatalf("unexpected conflict: %#v", conflict)
+	}
+	if !plan.HasConflicts() {
+		t.Fatalf("plan should report conflicts: %#v", plan.Changes)
 	}
 }
 
-func TestBuildPlanRejectsUnknownSourceID(t *testing.T) {
+func TestBuildPlanForceAllowsOneManagedOverwrite(t *testing.T) {
 	targetDir := t.TempDir()
-	writePlanFile(t, targetDir, ".driftline-target.yaml", "version: 2\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: missing\n")
-	client := fakeSourceClient{
-		refs:  map[string]string{"y-writings/source-repo@main": "0123456789abcdef0123456789abcdef01234567"},
-		files: map[string][]byte{"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:.driftline-source.yaml": []byte("version: 2\nfiles: []\n")},
+	writePlanFile(t, targetDir, TargetConfigPath, targetConfigTOML(""))
+	writePlanFile(t, targetDir, ".github/workflows/ci.yaml", "target-owned\n")
+	client := newPlanSourceClient(`version = 2
+
+[files.github-workflow]
+ci = { path = ".github/workflows/ci.yaml", mode = "managed" }
+`, map[string]string{".github/workflows/ci.yaml": "source\n"})
+
+	plan, err := BuildPlan(PlanOptions{TargetDir: targetDir, Source: client, ForceKey: "github-workflow.ci"})
+	if err != nil {
+		t.Fatalf("build plan failed: %v", err)
 	}
-	_, err := BuildPlan(PlanOptions{TargetDir: targetDir, Source: client})
-	if err == nil || !strings.Contains(err.Error(), "unknown source file id") {
-		t.Fatalf("expected unknown id error, got %v", err)
+	if plan.HasConflicts() {
+		t.Fatalf("forced key should not conflict: %#v", plan.Changes)
 	}
+	change := planChange(t, plan, StatusUpdate, "github-workflow.ci")
+	if !change.WritesTarget || string(change.SourceBytes) != "source\n" {
+		t.Fatalf("unexpected forced update change: %#v", change)
+	}
+	assertPlanHasChange(t, plan, StatusTargetConfigAdd, "github-workflow.ci", "add target config entry")
 }
 
-func TestBuildPlanRejectsResolvedDuplicateTargets(t *testing.T) {
+func TestBuildPlanConflictsWhenNewManagedKeyReusesExistingStaleTarget(t *testing.T) {
 	targetDir := t.TempDir()
-	writePlanFile(t, targetDir, ".driftline-target.yaml", "version: 2\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: first\n    path_overrides:\n      first: same.txt\n  - id: second\n    path_overrides:\n      second: same.txt\n")
-	client := fakeSourceClient{
-		refs:  map[string]string{"y-writings/source-repo@main": "0123456789abcdef0123456789abcdef01234567"},
-		files: map[string][]byte{"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:.driftline-source.yaml": []byte("version: 2\nfiles:\n  - id: first\n    paths:\n      first:\n        path: first.txt\n  - id: second\n    paths:\n      second:\n        path: second.txt\n")},
-	}
-	_, err := BuildPlan(PlanOptions{TargetDir: targetDir, Source: client})
-	if err == nil || !strings.Contains(err.Error(), "duplicate target") {
-		t.Fatalf("expected duplicate target error, got %v", err)
-	}
-}
+	writePlanFile(t, targetDir, TargetConfigPath, targetConfigTOML(`[files.old]
+config = "same.txt"
+`))
+	writePlanFile(t, targetDir, "same.txt", "old\n")
+	client := newPlanSourceClient(`version = 2
 
-func TestBuildPlanRejectsNormalizedDuplicateTargets(t *testing.T) {
-	targetDir := t.TempDir()
-	writePlanFile(t, targetDir, ".driftline-target.yaml", "version: 2\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: first\n    path_overrides:\n      first: foo.txt\n  - id: second\n    path_overrides:\n      second: ./foo.txt\n")
-	client := fakeSourceClient{
-		refs: map[string]string{"y-writings/source-repo@main": "0123456789abcdef0123456789abcdef01234567"},
-		files: map[string][]byte{
-			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:.driftline-source.yaml": []byte("version: 2\nfiles:\n  - id: first\n    paths:\n      first:\n        path: first.txt\n  - id: second\n    paths:\n      second:\n        path: second.txt\n"),
-			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:first.txt":              []byte("first\n"),
-			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:second.txt":             []byte("second\n"),
-		},
-	}
-	_, err := BuildPlan(PlanOptions{TargetDir: targetDir, Source: client})
-	if err == nil || !strings.Contains(err.Error(), "duplicate target") {
-		t.Fatalf("expected normalized duplicate target error, got %v", err)
-	}
-}
+[files.new]
+config = { path = "same.txt", mode = "managed" }
+`, map[string]string{"same.txt": "new\n"})
 
-func TestBuildPlanTreatsNormalizedLockTargetAsActive(t *testing.T) {
-	targetDir := t.TempDir()
-	writePlanFile(t, targetDir, ".driftline-target.yaml", "version: 2\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: sample\n    path_overrides:\n      sample: ./foo.txt\n")
-	writePlanFile(t, targetDir, "foo.txt", "hello\n")
-	writePlanFile(t, targetDir, "driftline-lock.yaml", "version: 1\nrepository: y-writings/source-repo\nref: main\ncommit: 0123456789abcdef0123456789abcdef01234567\nfiles:\n  - id: sample\n    target_path: foo.txt\n")
-	client := fakeSourceClient{
-		refs: map[string]string{"y-writings/source-repo@main": "0123456789abcdef0123456789abcdef01234567"},
-		files: map[string][]byte{
-			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:.driftline-source.yaml": []byte("version: 2\nfiles:\n  - id: sample\n    paths:\n      sample:\n        path: sample.txt\n"),
-			"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:sample.txt":             []byte("hello\n"),
-		},
-	}
 	plan, err := BuildPlan(PlanOptions{TargetDir: targetDir, Source: client})
 	if err != nil {
 		t.Fatalf("build plan failed: %v", err)
 	}
-	for _, change := range plan.Changes {
-		if change.Status == StatusPrune {
-			t.Fatalf("normalized active target should not be stale: %#v", plan.Changes)
-		}
+	conflict := planChange(t, plan, StatusConflict, "new.config")
+	if conflict.Target != "same.txt" || !strings.Contains(conflict.Reason, "target already exists") || !conflict.ForceAllowed {
+		t.Fatalf("unexpected conflict for reused stale target: %#v", conflict)
 	}
-	if item := plan.NextLockItem("sample", "foo.txt"); item.TargetPath != "foo.txt" {
-		t.Fatalf("expected normalized active lock target, got %#v", item)
+	assertPlanDoesNotHaveChange(t, plan, StatusUpdate, "new.config")
+}
+
+func TestBuildPlanForceMovesStaleTargetConfigPathToNewManagedKey(t *testing.T) {
+	targetDir := t.TempDir()
+	writePlanFile(t, targetDir, TargetConfigPath, targetConfigTOML(`[files.old]
+config = "same.txt"
+`))
+	writePlanFile(t, targetDir, "same.txt", "old\n")
+	client := newPlanSourceClient(`version = 2
+
+[files.new]
+config = { path = "same.txt", mode = "managed" }
+`, map[string]string{"same.txt": "new\n"})
+
+	plan, err := BuildPlan(PlanOptions{TargetDir: targetDir, Source: client, ForceKey: "new.config"})
+	if err != nil {
+		t.Fatalf("build plan failed: %v", err)
+	}
+	if plan.HasConflicts() {
+		t.Fatalf("forced stale target reuse should not conflict: %#v", plan.Changes)
+	}
+	change := planChange(t, plan, StatusUpdate, "new.config")
+	if !change.WritesTarget || change.Target != "same.txt" {
+		t.Fatalf("new managed key should update reused target path: %#v", change)
+	}
+	assertPlanHasChange(t, plan, StatusTargetConfigAdd, "new.config", "add target config entry")
+	assertPlanHasChange(t, plan, StatusTargetConfigRemove, "old.config", "remove target config entry")
+	assertPlanDoesNotHaveChange(t, plan, StatusRemove, "old.config")
+}
+
+func TestBuildPlanAllowsReplacingStaleManagedFileWithDirectoryChild(t *testing.T) {
+	targetDir := t.TempDir()
+	writePlanFile(t, targetDir, TargetConfigPath, targetConfigTOML(`[files.old]
+config = "dir"
+`))
+	writePlanFile(t, targetDir, "dir", "old\n")
+	client := newPlanSourceClient(`version = 2
+
+[files.new]
+config = { path = "dir/file", mode = "managed" }
+`, map[string]string{"dir/file": "new\n"})
+
+	plan, err := BuildPlan(PlanOptions{TargetDir: targetDir, Source: client})
+	if err != nil {
+		t.Fatalf("build plan failed: %v", err)
+	}
+
+	remove := planChange(t, plan, StatusRemove, "old.config")
+	if !remove.DeletesTarget || remove.Target != "dir" {
+		t.Fatalf("unexpected stale removal: %#v", remove)
+	}
+	add := planChange(t, plan, StatusAdd, "new.config")
+	if !add.WritesTarget || add.Target != "dir/file" || string(add.SourceBytes) != "new\n" {
+		t.Fatalf("unexpected child add: %#v", add)
+	}
+	assertPlanHasChange(t, plan, StatusTargetConfigAdd, "new.config", "add target config entry")
+	assertPlanHasChange(t, plan, StatusTargetConfigRemove, "old.config", "remove target config entry")
+}
+
+func TestBuildPlanConflictsWhenNewManagedParentReusesStaleChildDirectory(t *testing.T) {
+	targetDir := t.TempDir()
+	writePlanFile(t, targetDir, TargetConfigPath, targetConfigTOML(`[files.old]
+config = "dir/file"
+`))
+	writePlanFile(t, targetDir, "dir/file", "old\n")
+	client := newPlanSourceClient(`version = 2
+
+[files.new]
+config = { path = "dir", mode = "managed" }
+`, map[string]string{"dir": "new\n"})
+
+	plan, err := BuildPlan(PlanOptions{TargetDir: targetDir, Source: client})
+	if err != nil {
+		t.Fatalf("build plan failed: %v", err)
+	}
+
+	conflict := planChange(t, plan, StatusConflict, "new.config")
+	if conflict.Target != "dir" || !strings.Contains(conflict.Reason, "target already exists") || conflict.ForceAllowed {
+		t.Fatalf("unexpected parent directory conflict: %#v", conflict)
+	}
+	remove := planChange(t, plan, StatusRemove, "old.config")
+	if !remove.DeletesTarget || remove.Target != "dir/file" {
+		t.Fatalf("unexpected stale child removal: %#v", remove)
+	}
+	assertPlanHasChange(t, plan, StatusTargetConfigRemove, "old.config", "remove target config entry")
+}
+
+func TestBuildPlanConflictsWhenNewManagedChildIsBlockedByTargetOwnedFile(t *testing.T) {
+	targetDir := t.TempDir()
+	writePlanFile(t, targetDir, TargetConfigPath, targetConfigTOML(""))
+	writePlanFile(t, targetDir, "config", "target-owned\n")
+	client := newPlanSourceClient(`version = 2
+
+[files.tool]
+config = { path = "config/tool.toml", mode = "managed" }
+`, map[string]string{"config/tool.toml": "source\n"})
+
+	plan, err := BuildPlan(PlanOptions{TargetDir: targetDir, Source: client})
+	if err != nil {
+		t.Fatalf("build plan failed: %v", err)
+	}
+
+	conflict := planChange(t, plan, StatusConflict, "tool.config")
+	if conflict.Target != "config/tool.toml" || !strings.Contains(conflict.Reason, "target already exists") || conflict.ForceAllowed {
+		t.Fatalf("unexpected blocked child conflict: %#v", conflict)
+	}
+	assertPlanDoesNotHaveChange(t, plan, StatusAdd, "tool.config")
+}
+
+func TestBuildPlanConflictsWhenDeclaredManagedChildIsBlockedByTargetOwnedFile(t *testing.T) {
+	targetDir := t.TempDir()
+	writePlanFile(t, targetDir, TargetConfigPath, targetConfigTOML(`[files.tool]
+config = "config/tool.toml"
+`))
+	writePlanFile(t, targetDir, "config", "target-owned\n")
+	client := newPlanSourceClient(`version = 2
+
+[files.tool]
+config = { path = "config/tool.toml", mode = "managed" }
+`, map[string]string{"config/tool.toml": "source\n"})
+
+	plan, err := BuildPlan(PlanOptions{TargetDir: targetDir, Source: client})
+	if err != nil {
+		t.Fatalf("build plan failed: %v", err)
+	}
+
+	conflict := planChange(t, plan, StatusConflict, "tool.config")
+	if conflict.Target != "config/tool.toml" || !strings.Contains(conflict.Reason, "target already exists") || conflict.ForceAllowed {
+		t.Fatalf("unexpected declared blocked child conflict: %#v", conflict)
+	}
+	assertPlanDoesNotHaveChange(t, plan, StatusAdd, "tool.config")
+	assertPlanDoesNotHaveChange(t, plan, StatusUpdate, "tool.config")
+}
+
+func TestBuildPlanConflictsWhenStaleChildProbeIsBlockedByTargetOwnedFile(t *testing.T) {
+	targetDir := t.TempDir()
+	writePlanFile(t, targetDir, TargetConfigPath, targetConfigTOML(`[files.old]
+config = "config/old"
+`))
+	writePlanFile(t, targetDir, "config", "target-owned\n")
+	client := newPlanSourceClient(`version = 2
+
+[files.new]
+config = { path = "config/old/tool.toml", mode = "managed" }
+`, map[string]string{"config/old/tool.toml": "source\n"})
+
+	plan, err := BuildPlan(PlanOptions{TargetDir: targetDir, Source: client})
+	if err != nil {
+		t.Fatalf("build plan failed: %v", err)
+	}
+
+	conflict := planChange(t, plan, StatusConflict, "new.config")
+	if conflict.Target != "config/old/tool.toml" || !strings.Contains(conflict.Reason, "target already exists") || conflict.ForceAllowed {
+		t.Fatalf("unexpected stale probe conflict: %#v", conflict)
+	}
+	remove := planChange(t, plan, StatusRemove, "old.config")
+	if !remove.DeletesTarget || remove.Target != "config/old" {
+		t.Fatalf("unexpected stale removal: %#v", remove)
+	}
+	assertPlanHasChange(t, plan, StatusTargetConfigRemove, "old.config", "remove target config entry")
+}
+
+func TestBuildPlanIgnoresTemplateAndOldLockFilesDuringUpdate(t *testing.T) {
+	targetDir := t.TempDir()
+	writePlanFile(t, targetDir, TargetConfigPath, targetConfigTOML(""))
+	writePlanFile(t, targetDir, "driftline-lock.yaml", "not: valid: yaml\n")
+	client := newPlanSourceClient(`version = 2
+
+[files.mise]
+config = { path = ".mise/config.toml", mode = "template" }
+`, map[string]string{".mise/config.toml": "template\n"})
+
+	plan, err := BuildPlan(PlanOptions{TargetDir: targetDir, Source: client})
+	if err != nil {
+		t.Fatalf("build plan should ignore template and lock files: %v", err)
+	}
+	if HasDrift(plan.Changes) {
+		t.Fatalf("new templates are not applied during update: %#v", plan.Changes)
 	}
 }
 
-func TestBuildPlanRejectsReservedTargetPaths(t *testing.T) {
-	for name, tc := range map[string]struct {
-		targetConfig string
-		manifest     string
+func TestBuildPlanConflictsWhenNewManagedDefaultTargetIsAlreadyDeclared(t *testing.T) {
+	targetDir := t.TempDir()
+	writePlanFile(t, targetDir, TargetConfigPath, targetConfigTOML(`[files.existing]
+config = "same.txt"
+`))
+	client := newPlanSourceClient(`version = 2
+
+[files.existing]
+config = { path = "existing.txt", mode = "managed" }
+
+[files.new]
+config = { path = "same.txt", mode = "managed" }
+`, map[string]string{"existing.txt": "existing\n", "same.txt": "new\n"})
+
+	plan, err := BuildPlan(PlanOptions{TargetDir: targetDir, Source: client})
+	if err != nil {
+		t.Fatalf("build plan failed: %v", err)
+	}
+	conflict := planChange(t, plan, StatusConflict, "new.config")
+	if !strings.Contains(conflict.Reason, "already declared") {
+		t.Fatalf("unexpected duplicate target conflict: %#v", conflict)
+	}
+	if conflict.ForceAllowed {
+		t.Fatalf("force must not be advertised for duplicate desired targets: %#v", conflict)
+	}
+}
+
+func TestBuildPlanConflictsWhenManagedTargetPathsOverlap(t *testing.T) {
+	tests := []struct {
+		name       string
+		manifest   string
+		targets    string
+		conflictID string
+		target     string
+		reason     string
 	}{
-		"source path default target config": {
-			targetConfig: "version: 2\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: sample\n",
-			manifest:     "version: 2\nfiles:\n  - id: sample\n    paths:\n      sample:\n        path: .driftline-target.yaml\n",
+		{
+			name: "parent path before child path",
+			manifest: `version = 2
+
+[files.a]
+parent = { path = "source-parent.txt", mode = "managed" }
+
+[files.b]
+child = { path = "source-child.txt", mode = "managed" }
+`,
+			targets: `[files.a]
+parent = "dir"
+
+[files.b]
+child = "dir/file"
+`,
+			conflictID: "b.child",
+			target:     "dir/file",
+			reason:     "overlaps with a.parent",
 		},
-		"target config override lock": {
-			targetConfig: "version: 2\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: sample\n    path_overrides:\n      sample: driftline-lock.yaml\n",
-			manifest:     "version: 2\nfiles:\n  - id: sample\n    paths:\n      sample:\n        path: sample.txt\n",
+		{
+			name: "child path before parent path",
+			manifest: `version = 2
+
+[files.a]
+child = { path = "source-child.txt", mode = "managed" }
+
+[files.b]
+parent = { path = "source-parent.txt", mode = "managed" }
+`,
+			targets: `[files.a]
+child = "dir/file"
+
+[files.b]
+parent = "dir"
+`,
+			conflictID: "b.parent",
+			target:     "dir",
+			reason:     "overlaps with a.child",
 		},
-		"normalized source path default target config": {
-			targetConfig: "version: 2\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: sample\n",
-			manifest:     "version: 2\nfiles:\n  - id: sample\n    paths:\n      sample:\n        path: ./.driftline-target.yaml\n",
-		},
-		"normalized target config override lock": {
-			targetConfig: "version: 2\nsource:\n  repository: y-writings/source-repo\n  ref: main\nfiles:\n  - id: sample\n    path_overrides:\n      sample: ./driftline-lock.yaml\n",
-			manifest:     "version: 2\nfiles:\n  - id: sample\n    paths:\n      sample:\n        path: sample.txt\n",
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
 			targetDir := t.TempDir()
-			writePlanFile(t, targetDir, ".driftline-target.yaml", tc.targetConfig)
-			client := fakeSourceClient{
-				refs: map[string]string{"y-writings/source-repo@main": "0123456789abcdef0123456789abcdef01234567"},
-				files: map[string][]byte{
-					"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:.driftline-source.yaml": []byte(tc.manifest),
-					"y-writings/source-repo@0123456789abcdef0123456789abcdef01234567:sample.txt":             []byte("hello\n"),
-				},
+			writePlanFile(t, targetDir, TargetConfigPath, targetConfigTOML(tt.targets))
+			client := newPlanSourceClient(tt.manifest, map[string]string{
+				"source-parent.txt": "parent\n",
+				"source-child.txt":  "child\n",
+			})
+
+			plan, err := BuildPlan(PlanOptions{TargetDir: targetDir, Source: client})
+			if err != nil {
+				t.Fatalf("build plan failed: %v", err)
 			}
-			_, err := BuildPlan(PlanOptions{TargetDir: targetDir, Source: client})
-			if err == nil || !strings.Contains(err.Error(), "reserved target path") {
-				t.Fatalf("expected reserved target path error, got %v", err)
+
+			conflict := planChange(t, plan, StatusConflict, tt.conflictID)
+			if conflict.Target != tt.target || !strings.Contains(conflict.Reason, tt.reason) || conflict.ForceAllowed {
+				t.Fatalf("unexpected overlapping target conflict: %#v", conflict)
 			}
+			if !plan.HasConflicts() {
+				t.Fatalf("plan should report conflicts: %#v", plan.Changes)
+			}
+			assertPlanDoesNotHaveChange(t, plan, StatusAdd, tt.conflictID)
 		})
 	}
 }
 
-func TestBuildPlanDropsStaleLockEntryWhenTargetIsActiveAgain(t *testing.T) {
-	targetDir := t.TempDir()
-	writePlanFile(t, targetDir, ".driftline-target.yaml", "version: 2\nsource:\n  repository: y-writings/new-source\n  ref: main\nfiles:\n  - id: sample\n    path_overrides:\n      sample: same.txt\n")
-	writePlanFile(t, targetDir, "same.txt", "old\n")
-	writePlanFile(t, targetDir, "driftline-lock.yaml", "version: 1\nrepository: y-writings/old-source\nref: main\ncommit: oldoldoldoldoldoldoldoldoldoldoldoldoldoldoldold\nfiles:\n  - id: old-id\n    target_path: same.txt\n")
+func targetConfigTOML(files string) string {
+	return `version = 2
+
+[source]
+repository = "y-writings/source-repo"
+ref = "main"
+` + files
+}
+
+func newPlanSourceClient(sourceManifest string, files map[string]string) fakeSourceClient {
+	commit := "0123456789abcdef0123456789abcdef01234567"
 	client := fakeSourceClient{
-		refs: map[string]string{"y-writings/new-source@main": "0123456789abcdef0123456789abcdef01234567"},
+		refs: map[string]string{"y-writings/source-repo@main": commit},
 		files: map[string][]byte{
-			"y-writings/new-source@0123456789abcdef0123456789abcdef01234567:.driftline-source.yaml": []byte("version: 2\nfiles:\n  - id: sample\n    paths:\n      sample:\n        path: sample.txt\n"),
-			"y-writings/new-source@0123456789abcdef0123456789abcdef01234567:sample.txt":             []byte("new\n"),
+			"y-writings/source-repo@" + commit + ":" + SourceManifestPath: []byte(sourceManifest),
 		},
 	}
-	plan, err := BuildPlan(PlanOptions{TargetDir: targetDir, Source: client})
-	if err != nil {
-		t.Fatalf("build plan failed: %v", err)
+	for path, content := range files {
+		client.files["y-writings/source-repo@"+commit+":"+path] = []byte(content)
 	}
-	for _, item := range plan.NextLock.Files {
-		if item.ID == "old-id" {
-			t.Fatalf("old lock entry for active target should be dropped: %#v", plan.NextLock.Files)
-		}
-	}
+	return client
 }
 
 func writePlanFile(t *testing.T, root, path, content string) {
@@ -366,16 +527,6 @@ func assertPlanHasChange(t *testing.T, plan Plan, status Status, id string, reas
 		}
 	}
 	t.Fatalf("missing change %s %s containing %q in %#v", status, id, reason, plan.Changes)
-}
-
-func countChanges(plan Plan, status Status, id string) int {
-	count := 0
-	for _, change := range plan.Changes {
-		if change.Status == status && change.ID == id {
-			count++
-		}
-	}
-	return count
 }
 
 func planChange(t *testing.T, plan Plan, status Status, id string) Change {

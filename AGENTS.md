@@ -12,6 +12,14 @@ When changing behavior, do not add backward-compatibility code unless the user e
 
 If an old interface conflicts with a clearer new interface, replace it instead of supporting both. Update the implementation, tests, schema, and documentation to the new behavior directly.
 
+## Active Config Redesign Constraint
+
+The canonical design for the current configuration redesign is `docs/superpowers/specs/2026-06-27-toml-managed-template-sync-design.md`.
+
+That redesign is intentionally destructive. Implement it by replacing the current YAML, lock-file, `path_overrides`, `if_not_exists`, and standalone `prune` model. Do not preserve old behavior for compatibility.
+
+Previous docs, plans, schemas, README examples, tests, and fixtures that describe the YAML config shape or lock-file based behavior are stale for this work. Do not use them as design references or compatibility requirements. Use them only to locate obsolete implementation, tests, docs, or fixtures that must be removed or rewritten to match the canonical redesign spec.
+
 ## Safety Boundary
 
 In this file, "breaking change" means breaking CLI/API/config/schema/output compatibility. It does not authorize destructive shell commands, deleting user data, discarding unrelated worktree changes, or bypassing normal safety checks.
