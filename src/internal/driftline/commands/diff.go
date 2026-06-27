@@ -22,7 +22,7 @@ func runDiff(source driftline.SourceClient, opts TargetOptions, stdout io.Writer
 				return err
 			}
 		case change.Status != driftline.StatusSynced:
-			fmt.Fprintf(stdout, "%s %s: %s\n", change.Status, change.ID, change.Reason)
+			printChange(stdout, change)
 		}
 	}
 	if driftline.HasDrift(plan.Changes) {

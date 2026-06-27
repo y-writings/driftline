@@ -51,17 +51,11 @@ func (r Runner) Run(args []string, stdout, stderr io.Writer) error {
 		}
 		return runDiff(r.Source, opts, stdout)
 	case "update":
-		opts, err := parseTargetOptions(args[1:])
+		opts, err := parseUpdateOptions(args[1:])
 		if err != nil {
 			return err
 		}
 		return runUpdate(r.Source, opts, stdout)
-	case "prune":
-		opts, err := parseTargetOptions(args[1:])
-		if err != nil {
-			return err
-		}
-		return runPrune(r.Source, opts, stdout)
 	case "help", "-h", "--help":
 		printUsage(stdout)
 		return nil
@@ -73,6 +67,11 @@ func (r Runner) Run(args []string, stdout, stderr io.Writer) error {
 
 type TargetOptions struct {
 	TargetDir string
+}
+
+type UpdateOptions struct {
+	TargetDir string
+	ForceKey  string
 }
 
 type InitOptions struct {
@@ -88,6 +87,29 @@ func parseTargetOptions(args []string) (TargetOptions, error) {
 			return opts, err
 		} else if ok {
 			opts.TargetDir = value
+			continue
+		}
+		return opts, fmt.Errorf("unknown option %q", args[i])
+	}
+	return opts, nil
+}
+
+func parseUpdateOptions(args []string) (UpdateOptions, error) {
+	opts := UpdateOptions{TargetDir: "."}
+	for i := 0; i < len(args); i++ {
+		if value, ok, err := parseStringOption(args, &i, "target-dir"); err != nil {
+			return opts, err
+		} else if ok {
+			opts.TargetDir = value
+			continue
+		}
+		if value, ok, err := parseStringOption(args, &i, "force"); err != nil {
+			return opts, err
+		} else if ok {
+			if opts.ForceKey != "" {
+				return opts, fmt.Errorf("--force may be provided once")
+			}
+			opts.ForceKey = value
 			continue
 		}
 		return opts, fmt.Errorf("unknown option %q", args[i])
@@ -145,20 +167,21 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, `usage: driftline <command> [options]
 
 commands:
-  init owner/repo  create .driftline-target.yaml from a GitHub Source Repository
+  init owner/repo  create .driftline-target.toml from a GitHub Source Repository
   check            check whether target files match the Source Repository
   diff             show diffs for files that would be added or updated
-  update           copy added/updated files and refresh driftline-lock.yaml
-  prune            remove stale files when they are unchanged locally
+  update           sync managed files and refresh .driftline-target.toml
 
 examples:
   driftline init owner/repo
   driftline init owner/repo --ref main --target-dir .
   driftline check --target-dir .
+  driftline update --force github-workflow.ci
 
 options:
   --target-dir string  target repository directory (default ".")
-  --ref string         init-only ref to preserve in .driftline-target.yaml
+  --ref string         init-only ref to preserve in .driftline-target.toml
+  --force group.file   update-only one-time conflict overwrite
 
 authentication:
   set GITHUB_TOKEN for private repositories or higher rate limits`)

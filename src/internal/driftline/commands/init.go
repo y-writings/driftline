@@ -25,14 +25,8 @@ func runInit(source driftline.SourceClient, opts InitOptions, stdout io.Writer) 
 		return fmt.Errorf("target directory must be a directory: %s", opts.TargetDir)
 	}
 	configPath := filepath.Join(opts.TargetDir, driftline.TargetConfigPath)
-	lockPath := filepath.Join(opts.TargetDir, driftline.LockFilePath)
 	if _, err := os.Stat(configPath); err == nil {
 		return fmt.Errorf("target config already exists: %s", driftline.TargetConfigPath)
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	if _, err := os.Stat(lockPath); err == nil {
-		return fmt.Errorf("lock file already exists: %s", driftline.LockFilePath)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
@@ -57,7 +51,7 @@ func runInit(source driftline.SourceClient, opts InitOptions, stdout io.Writer) 
 	}
 	manifestBytes, err := source.ReadFile(opts.Repository, commit, driftline.SourceManifestPath)
 	if err != nil {
-		return fmt.Errorf(".driftline-source.yaml not found in source repository: %w", err)
+		return fmt.Errorf(".driftline-source.toml not found in source repository: %w", err)
 	}
 	manifest, err := driftline.LoadSourceManifestBytes(manifestBytes)
 	if err != nil {
@@ -67,9 +61,64 @@ func runInit(source driftline.SourceClient, opts InitOptions, stdout io.Writer) 
 	if err != nil {
 		return err
 	}
+	templates, err := collectInitialTemplates(source, opts, commit, manifest)
+	if err != nil {
+		return err
+	}
 	if err := driftline.WriteTargetConfig(configPath, config); err != nil {
 		return err
 	}
-	fmt.Fprintf(stdout, "created .driftline-target.yaml from %s@%s\n", opts.Repository, commit)
+	for _, template := range templates {
+		if err := driftline.WriteFileBytes(template.targetPath, template.sourceBytes); err != nil {
+			return err
+		}
+	}
+	fmt.Fprintf(stdout, "created .driftline-target.toml from %s@%s\n", opts.Repository, commit)
 	return nil
+}
+
+type initialTemplate struct {
+	targetPath  string
+	sourceBytes []byte
+}
+
+func collectInitialTemplates(source driftline.SourceClient, opts InitOptions, commit string, manifest driftline.SourceManifest) ([]initialTemplate, error) {
+	templates := []initialTemplate{}
+	for _, entry := range driftline.SourceEntries(manifest) {
+		targetPath, err := driftline.PathWithin(opts.TargetDir, entry.Path, fmt.Sprintf("target %q", entry.Key))
+		if err != nil {
+			return nil, err
+		}
+		exists, err := fileExists(targetPath)
+		if err != nil {
+			return nil, err
+		}
+		switch entry.Mode {
+		case driftline.ModeManaged:
+			if exists {
+				return nil, fmt.Errorf("managed target already exists: %s", entry.Path)
+			}
+		case driftline.ModeTemplate:
+			if exists {
+				continue
+			}
+			data, err := source.ReadFile(opts.Repository, commit, entry.Path)
+			if err != nil {
+				return nil, fmt.Errorf("source template not found in source repository: %w", err)
+			}
+			templates = append(templates, initialTemplate{targetPath: targetPath, sourceBytes: data})
+		}
+	}
+	return templates, nil
+}
+
+func fileExists(path string) (bool, error) {
+	_, err := os.Stat(path)
+	if err == nil {
+		return true, nil
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	return false, err
 }

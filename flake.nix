@@ -39,7 +39,7 @@
             };
             subPackages = [ "src/cmd/driftline" ];
 
-            vendorHash = "sha256-g+yaVIx4jxpAQ/+WrGKxhVeliYx7nLQe/zsGpxV4Fn4=";
+            vendorHash = "sha256-CVycV7wxo7nOHm7qjZKfJrIkNcIApUNzN1mSIIwQN0g=";
 
             nativeBuildInputs = [ pkgs.makeWrapper ];
 

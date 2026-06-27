@@ -1,6 +1,8 @@
 # driftline
 
-`driftline` copies files from a GitHub Source Repository into a Target Repository and records the consumed Git commit in `driftline-lock.yaml`.
+`driftline` synchronizes files from a GitHub Source Repository into a Target Repository using small TOML manifests.
+
+The Source Repository defines file identity and mode. The Target Repository defines placement for managed files.
 
 ## Install
 
@@ -28,88 +30,69 @@ Build from source with Go:
 go build ./src/cmd/driftline
 ```
 
-## Source Manifest
+## Source Config
 
-The Source Repository owns `.driftline-source.yaml` at its repository root.
-Editors that support JSON Schema can validate it with the canonical schema.
+The Source Repository owns `.driftline-source.toml` at its repository root.
 
-```yaml
-# yaml-language-server: $schema=https://raw.githubusercontent.com/y-writings/driftline/main/schema.json
-version: 2
-gitignore:
-  - .cache/tool
-files:
-  - id: github-workflow
-    name: GitHub workflows
-    paths:
-      ci:
-        name: CI workflow
-        path: .github/workflows/ci.yaml
-      release:
-        name: Release workflow
-        path: .github/workflows/release.yaml
-  - id: local-config
-    paths:
-      config:
-        path: templates/config.local
+```toml
+version = 2
+
+[files.github-workflow]
+ci = { path = ".github/workflows/ci.yaml", mode = "managed" }
+release = { path = ".github/workflows/release.yaml", mode = "template" }
+
+[files.mise]
+config = { path = ".mise/config.toml", mode = "template" }
 ```
 
-Source Manifest file entries define adoption units. Each `id` can expose one or more source-side `paths` keyed by stable file ID; target paths belong to the Target Config.
+Source config rules:
 
-Allowed Source Manifest properties:
-
-| Section | Properties |
-| --- | --- |
-| root | `version`, `gitignore`, `files` |
-| `files[]` | `id`, `name`, `paths` |
-| `paths` | stable file ID keys |
-| `paths.<file_id>` | `name`, `path` |
+- `version = 2` is required.
+- `[files.<group>]` groups related files.
+- Each file is keyed by stable file ID inside its group.
+- Each file entry has `path` and `mode`.
+- `mode` is `managed` or `template`.
 
 ## Target Config
 
-Create a Target Config from a GitHub repository:
+Create a Target Config from a GitHub Source Repository:
 
 ```sh
 driftline init y-writings/source-repo
 ```
 
-This creates `.driftline-target.yaml` in the Target Repository.
+This creates `.driftline-target.toml` in the Target Repository.
 
-```yaml
-# yaml-language-server: $schema=https://raw.githubusercontent.com/y-writings/driftline/main/target-schema.json
-version: 2
-source:
-  repository: y-writings/source-repo
-  ref: main
-files:
-  - id: github-workflow
-  - id: local-config
-    if_not_exists: true
+```toml
+version = 2
+
+[source]
+repository = "y-writings/source-repo"
+ref = "main"
+
+[files.github-workflow]
+ci = ".github/workflows/project-ci.yaml"
 ```
 
-Allowed Target Config properties:
+Target config rules:
 
-| Section | Properties |
-| --- | --- |
-| root | `version`, `source`, `files` |
-| `source` | `repository`, `ref` |
-| `files[]` | `id`, `path_overrides`, `if_not_exists` |
-| `path_overrides` | Source Manifest file ID keys with target path values |
+- `version = 2` is required.
+- `[source]` contains `repository` and `ref`.
+- `[files.<group>]` contains managed files only.
+- Each file value is the target repository path for that managed file.
+- Template files are not recorded after initial placement.
 
-When a Target Config file entry has no `path_overrides`, driftline writes each source path to the same relative path in the Target Repository. Add `path_overrides` only for Source Manifest file IDs that need a different target-side path:
-
-```yaml
-files:
-  - id: github-workflow
-    path_overrides:
-      ci: .github/workflows/project-ci.yaml
-```
-
-Use `--ref` with `init` to pin the configured branch, tag, or commit-ish by name:
+Use `--ref` with `init` to preserve a branch, tag, or commit-ish by name:
 
 ```sh
 driftline init y-writings/source-repo --ref main
 ```
+
+## File Modes
+
+Managed files stay synchronized with the source. `driftline update` adds missing managed entries to `.driftline-target.toml`, updates changed files, removes entries that are no longer managed, and deletes files that were removed from the managed source set.
+
+Template files are initial placement aids. `driftline init` writes a template file only when the target path is missing. Later updates do not record, update, or delete template files.
 
 ## Commands
 
@@ -117,26 +100,17 @@ driftline init y-writings/source-repo --ref main
 driftline check
 driftline diff
 driftline update
-driftline prune
 ```
 
 Use `--target-dir` to operate on another Target Repository path.
 
-## Lock File
+If a newly managed file would overwrite an existing target-owned file, driftline reports a conflict and does not write files or config. To overwrite one file once, pass its file key:
 
-`driftline update` writes `driftline-lock.yaml` with the resolved Git commit and managed target files.
-
-```yaml
-version: 1
-repository: y-writings/source-repo
-ref: main
-commit: 0123456789abcdef0123456789abcdef01234567
-files:
-  - id: github-workflow
-    target_path: .github/workflows/project-ci.yaml
-  - id: github-workflow
-    target_path: .github/workflows/release.yaml
+```sh
+driftline update --force github-workflow.ci
 ```
+
+Force is not persisted in `.driftline-target.toml`.
 
 ## GitHub Authentication
 
