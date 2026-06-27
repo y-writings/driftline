@@ -299,6 +299,31 @@ ci = { path = ".github/workflows/ci.yaml", mode = "managed" }
 	}
 }
 
+func TestUpdateReplacesStaleManagedFileWithDirectoryChild(t *testing.T) {
+	targetDir := t.TempDir()
+	writeFile(t, targetDir, driftline.TargetConfigPath, targetConfigTOML(`[files.old]
+config = "dir"
+`))
+	writeFile(t, targetDir, "dir", "old\n")
+	client := newCommandSourceClient("main", `version = 2
+
+[files.new]
+config = { path = "dir/file", mode = "managed" }
+`, map[string]string{"dir/file": "new\n"})
+
+	var stdout, stderr bytes.Buffer
+	if err := (Runner{Source: client}).Run([]string{"update", "--target-dir", targetDir}, &stdout, &stderr); err != nil {
+		t.Fatalf("update failed: %v", err)
+	}
+	if got := readFile(t, targetDir, "dir/file"); got != "new\n" {
+		t.Fatalf("unexpected child file content: %q", got)
+	}
+	config := readFile(t, targetDir, driftline.TargetConfigPath)
+	if strings.Contains(config, "old") || !strings.Contains(config, `[files.new]`) || !strings.Contains(config, `config = "dir/file"`) {
+		t.Fatalf("target config should move to new child entry:\n%s", config)
+	}
+}
+
 func TestDiffReportsNonContentChanges(t *testing.T) {
 	targetDir := t.TempDir()
 	writeFile(t, targetDir, driftline.TargetConfigPath, targetConfigTOML(`[files.github-workflow]

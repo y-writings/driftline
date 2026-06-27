@@ -23,12 +23,15 @@ func runUpdate(source driftline.SourceClient, opts UpdateOptions, stdout io.Writ
 		return err
 	}
 	defer cleanupConfig()
-	for _, change := range sortedChanges(plan.Changes) {
+	changes := sortedChanges(plan.Changes)
+	for _, change := range changes {
 		if change.Status == driftline.StatusRemove && change.DeletesTarget {
 			if err := os.Remove(change.TargetPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 				return err
 			}
 		}
+	}
+	for _, change := range changes {
 		if (change.Status == driftline.StatusAdd || change.Status == driftline.StatusUpdate) && change.WritesTarget {
 			if err := driftline.WriteFileBytes(change.TargetPath, change.SourceBytes); err != nil {
 				return err

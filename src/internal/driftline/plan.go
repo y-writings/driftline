@@ -1,7 +1,9 @@
 package driftline
 
 import (
+	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 )
@@ -98,6 +100,7 @@ func (b planBuilder) build() (Plan, error) {
 		targetByKey[entry.Key] = entry
 		declaredTargets[entry.Path] = entry.Key
 	}
+	staleDeleteTargets := staleDeleteTargetPaths(b.config, sourceByKey)
 
 	plan := Plan{
 		Repository: b.config.Source.Repository,
@@ -138,7 +141,7 @@ func (b planBuilder) build() (Plan, error) {
 			resolved.staleOwner = other
 		}
 		usedTargets[resolved.target] = resolved.Key
-		if err := b.addManagedChange(&plan, resolved); err != nil {
+		if err := b.addManagedChange(&plan, resolved, staleDeleteTargets); err != nil {
 			return Plan{}, err
 		}
 	}
@@ -185,14 +188,22 @@ func (b planBuilder) build() (Plan, error) {
 	return plan, nil
 }
 
-func (b planBuilder) addManagedChange(plan *Plan, file resolvedManagedFile) error {
+func (b planBuilder) addManagedChange(plan *Plan, file resolvedManagedFile, staleDeleteTargets map[string]struct{}) error {
 	targetPath, err := PathWithin(b.opts.TargetDir, file.target, fmt.Sprintf("target %q", file.Key))
 	if err != nil {
 		return err
 	}
-	currentHash, targetExists, err := FileHash(targetPath)
+	currentHash := ""
+	targetExists := false
+	blockedByStaleFile, err := b.targetBlockedByStaleFileAncestor(file.target, staleDeleteTargets)
 	if err != nil {
-		return fmt.Errorf("hash target %s: %w", file.target, err)
+		return err
+	}
+	if !blockedByStaleFile {
+		currentHash, targetExists, err = FileHash(targetPath)
+		if err != nil {
+			return fmt.Errorf("hash target %s: %w", file.target, err)
+		}
 	}
 	if !file.declared && targetExists && b.opts.ForceKey != file.Key {
 		plan.Changes = append(plan.Changes, conflictChange(file, "target already exists", true))
@@ -234,6 +245,45 @@ func (b planBuilder) addManagedChange(plan *Plan, file resolvedManagedFile) erro
 	}
 	plan.Changes = append(plan.Changes, change)
 	return nil
+}
+
+func staleDeleteTargetPaths(config TargetConfig, sourceByKey map[string]SourceEntry) map[string]struct{} {
+	targets := map[string]struct{}{}
+	for _, target := range TargetEntries(config) {
+		if _, ok := sourceByKey[target.Key]; !ok {
+			targets[target.Path] = struct{}{}
+		}
+	}
+	return targets
+}
+
+func (b planBuilder) targetBlockedByStaleFileAncestor(target string, staleDeleteTargets map[string]struct{}) (bool, error) {
+	for staleTarget := range staleDeleteTargets {
+		if !isPathAncestor(staleTarget, target) {
+			continue
+		}
+		fullPath, err := PathWithin(b.opts.TargetDir, staleTarget, fmt.Sprintf("stale target %q", staleTarget))
+		if err != nil {
+			return false, err
+		}
+		info, err := os.Stat(fullPath)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return false, fmt.Errorf("stat stale target %s: %w", staleTarget, err)
+		}
+		if !info.IsDir() {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func isPathAncestor(parent string, child string) bool {
+	parent = normalizedConfigPath(parent)
+	child = normalizedConfigPath(child)
+	return parent != child && strings.HasPrefix(child, parent+"/")
 }
 
 func conflictChange(file resolvedManagedFile, reason string, forceAllowed bool) Change {

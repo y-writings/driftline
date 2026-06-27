@@ -230,6 +230,35 @@ config = { path = "same.txt", mode = "managed" }
 	assertPlanDoesNotHaveChange(t, plan, StatusRemove, "old.config")
 }
 
+func TestBuildPlanAllowsReplacingStaleManagedFileWithDirectoryChild(t *testing.T) {
+	targetDir := t.TempDir()
+	writePlanFile(t, targetDir, TargetConfigPath, targetConfigTOML(`[files.old]
+config = "dir"
+`))
+	writePlanFile(t, targetDir, "dir", "old\n")
+	client := newPlanSourceClient(`version = 2
+
+[files.new]
+config = { path = "dir/file", mode = "managed" }
+`, map[string]string{"dir/file": "new\n"})
+
+	plan, err := BuildPlan(PlanOptions{TargetDir: targetDir, Source: client})
+	if err != nil {
+		t.Fatalf("build plan failed: %v", err)
+	}
+
+	remove := planChange(t, plan, StatusRemove, "old.config")
+	if !remove.DeletesTarget || remove.Target != "dir" {
+		t.Fatalf("unexpected stale removal: %#v", remove)
+	}
+	add := planChange(t, plan, StatusAdd, "new.config")
+	if !add.WritesTarget || add.Target != "dir/file" || string(add.SourceBytes) != "new\n" {
+		t.Fatalf("unexpected child add: %#v", add)
+	}
+	assertPlanHasChange(t, plan, StatusTargetConfigAdd, "new.config", "add target config entry")
+	assertPlanHasChange(t, plan, StatusTargetConfigRemove, "old.config", "remove target config entry")
+}
+
 func TestBuildPlanIgnoresTemplateAndOldLockFilesDuringUpdate(t *testing.T) {
 	targetDir := t.TempDir()
 	writePlanFile(t, targetDir, TargetConfigPath, targetConfigTOML(""))
