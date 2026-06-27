@@ -1,6 +1,7 @@
 package driftline
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -145,6 +146,13 @@ func TestWriteTargetConfigWritesGroupedTOML(t *testing.T) {
 	if got := written.Files["github-workflow"]["ci"]; got != ".github/workflows/project-ci.yaml" {
 		t.Fatalf("unexpected round-trip target path: %q", got)
 	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat target config failed: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o644 {
+		t.Fatalf("target config should be readable, mode=%#o", got)
+	}
 }
 
 func TestPrepareTargetConfigWriteDoesNotReplaceConfigBeforeCommit(t *testing.T) {
@@ -183,6 +191,35 @@ func TestPrepareTargetConfigWriteDoesNotReplaceConfigBeforeCommit(t *testing.T) 
 	}
 }
 
+func TestPrepareTargetConfigWritePreservesExistingFileMode(t *testing.T) {
+	targetDir := t.TempDir()
+	path := filepath.Join(targetDir, TargetConfigPath)
+	if err := os.WriteFile(path, []byte(targetConfigText("y-writings/old-source")), 0o640); err != nil {
+		t.Fatalf("write old target config failed: %v", err)
+	}
+	if err := os.Chmod(path, 0o640); err != nil {
+		t.Fatalf("chmod old target config failed: %v", err)
+	}
+	commit, cleanup, err := PrepareTargetConfigWrite(path, TargetConfig{
+		Version: 2,
+		Source:  TargetSource{Repository: "y-writings/source-repo", Ref: "main"},
+	})
+	if err != nil {
+		t.Fatalf("prepare target config write failed: %v", err)
+	}
+	defer cleanup()
+	if err := commit(); err != nil {
+		t.Fatalf("commit target config failed: %v", err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat target config failed: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o640 {
+		t.Fatalf("target config mode should be preserved, mode=%#o", got)
+	}
+}
+
 func TestValidateConfigPath(t *testing.T) {
 	valid := []string{".github/workflows/ci.yml", "templates/my file.txt", "config/.env.example"}
 	for _, path := range valid {
@@ -197,4 +234,13 @@ func TestValidateConfigPath(t *testing.T) {
 			t.Fatalf("expected labelled validation error for %q, got %v", path, err)
 		}
 	}
+}
+
+func targetConfigText(repository string) string {
+	return `version = 2
+
+[source]
+repository = "` + repository + `"
+ref = "main"
+`
 }

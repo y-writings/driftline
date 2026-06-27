@@ -69,6 +69,12 @@ func PrepareTargetConfigWrite(path string, config TargetConfig) (func() error, f
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, nil, fmt.Errorf("create target config directory: %w", err)
 	}
+	mode := os.FileMode(0o644)
+	if info, err := os.Stat(path); err == nil {
+		mode = info.Mode().Perm()
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, nil, fmt.Errorf("stat target config: %w", err)
+	}
 	temp, err := os.CreateTemp(dir, ".driftline-target-*.toml")
 	if err != nil {
 		return nil, nil, fmt.Errorf("create target config temp file: %w", err)
@@ -85,6 +91,11 @@ func PrepareTargetConfigWrite(path string, config TargetConfig) (func() error, f
 		temp.Close()
 		cleanup()
 		return nil, nil, fmt.Errorf("write target config temp file: %w", err)
+	}
+	if err := temp.Chmod(mode); err != nil {
+		temp.Close()
+		cleanup()
+		return nil, nil, fmt.Errorf("chmod target config temp file: %w", err)
 	}
 	if err := temp.Close(); err != nil {
 		cleanup()
