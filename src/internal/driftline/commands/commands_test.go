@@ -137,22 +137,35 @@ release = { path = ".github/workflows/release.yaml", mode = "template" }
 	}
 }
 
-func TestInitRejectsSourceFilesTargetingTargetConfig(t *testing.T) {
+func TestInitRejectsSourceFilesTargetingReservedPaths(t *testing.T) {
 	for name, sourceManifest := range map[string]string{
-		"managed": `version = 2
+		"managed target config": `version = 2
 
 [files.driftline]
 target = { path = ".driftline-target.toml", mode = "managed" }
 `,
-		"template": `version = 2
+		"template target config": `version = 2
 
 [files.driftline]
 target = { path = ".driftline-target.toml", mode = "template" }
 `,
+		"managed old lock": `version = 2
+
+[files.driftline]
+lock = { path = "driftline-lock.yaml", mode = "managed" }
+`,
+		"template old lock": `version = 2
+
+[files.driftline]
+lock = { path = "driftline-lock.yaml", mode = "template" }
+`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			targetDir := t.TempDir()
-			client := newCommandSourceClient("main", sourceManifest, map[string]string{driftline.TargetConfigPath: "template bytes\n"})
+			client := newCommandSourceClient("main", sourceManifest, map[string]string{
+				driftline.TargetConfigPath: "template bytes\n",
+				"driftline-lock.yaml":      "lock bytes\n",
+			})
 			var stdout, stderr bytes.Buffer
 
 			err := (Runner{Source: client}).Run([]string{"init", "y-writings/source-repo", "--target-dir", targetDir}, &stdout, &stderr)
@@ -161,6 +174,7 @@ target = { path = ".driftline-target.toml", mode = "template" }
 				t.Fatalf("expected reserved target path error, got %v", err)
 			}
 			assertFileMissing(t, targetDir, driftline.TargetConfigPath)
+			assertFileMissing(t, targetDir, "driftline-lock.yaml")
 		})
 	}
 }
@@ -221,6 +235,23 @@ ci = { path = ".github/workflows/ci.yaml", mode = "managed" }
 	}
 	assertFileMissing(t, targetDir, "driftline-lock.yaml")
 	assertFileMissing(t, targetDir, ".gitignore")
+}
+
+func TestUpdateRejectsManagedDriftlineLockTarget(t *testing.T) {
+	targetDir := t.TempDir()
+	writeFile(t, targetDir, driftline.TargetConfigPath, targetConfigTOML(""))
+	client := newCommandSourceClient("main", `version = 2
+
+[files.driftline]
+lock = { path = "driftline-lock.yaml", mode = "managed" }
+`, map[string]string{"driftline-lock.yaml": "source\n"})
+
+	var stdout, stderr bytes.Buffer
+	err := (Runner{Source: client}).Run([]string{"update", "--target-dir", targetDir}, &stdout, &stderr)
+	if err == nil || !strings.Contains(err.Error(), "reserved target path") {
+		t.Fatalf("expected reserved target path error, got err=%v stdout=%q stderr=%q", err, stdout.String(), stderr.String())
+	}
+	assertFileMissing(t, targetDir, "driftline-lock.yaml")
 }
 
 func TestUpdateRemovesManagedFileDeletedFromSource(t *testing.T) {

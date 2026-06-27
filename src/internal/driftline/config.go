@@ -16,6 +16,7 @@ import (
 const (
 	SourceManifestPath = ".driftline-source.toml"
 	TargetConfigPath   = ".driftline-target.toml"
+	removedLockPath    = "driftline-lock.yaml"
 )
 
 var idPattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
@@ -275,7 +276,7 @@ func validateTargetConfig(config TargetConfig) error {
 				return err
 			}
 			normalized := normalizedConfigPath(targetPath)
-			if isReservedTargetPath(normalized) {
+			if IsReservedTargetPath(normalized) {
 				return fmt.Errorf("reserved target path %q", normalized)
 			}
 			if other, ok := seenTargets[normalized]; ok {

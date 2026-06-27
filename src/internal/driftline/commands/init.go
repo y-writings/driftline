@@ -85,7 +85,7 @@ type initialTemplate struct {
 func collectInitialTemplates(source driftline.SourceClient, opts InitOptions, commit string, manifest driftline.SourceManifest) ([]initialTemplate, error) {
 	templates := []initialTemplate{}
 	for _, entry := range driftline.SourceEntries(manifest) {
-		if entry.Path == driftline.TargetConfigPath {
+		if driftline.IsReservedTargetPath(entry.Path) {
 			return nil, fmt.Errorf("reserved target path %q", entry.Path)
 		}
 		targetPath, err := driftline.PathWithin(opts.TargetDir, entry.Path, fmt.Sprintf("target %q", entry.Key))

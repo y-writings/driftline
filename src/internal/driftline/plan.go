@@ -127,7 +127,7 @@ func (b planBuilder) build() (Plan, error) {
 			resolved.target = target.Path
 			resolved.declared = true
 		}
-		if isReservedTargetPath(resolved.target) {
+		if IsReservedTargetPath(resolved.target) {
 			return Plan{}, fmt.Errorf("reserved target path %q", resolved.target)
 		}
 		if other, ok := usedTargets[resolved.target]; ok {
@@ -359,9 +359,9 @@ func validateForceKey(key string) error {
 	return nil
 }
 
-func isReservedTargetPath(target string) bool {
+func IsReservedTargetPath(target string) bool {
 	target = normalizedConfigPath(target)
-	return target == TargetConfigPath
+	return target == TargetConfigPath || target == removedLockPath
 }
 
 func normalizedConfigPath(path string) string {
