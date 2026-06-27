@@ -134,6 +134,10 @@ func (b planBuilder) build() (Plan, error) {
 			plan.Changes = append(plan.Changes, conflictChange(resolved, "target already declared by "+other, false))
 			continue
 		}
+		if other, ok := overlappingManagedTarget(resolved.target, usedTargets); ok {
+			plan.Changes = append(plan.Changes, conflictChange(resolved, "target overlaps with "+other, false))
+			continue
+		}
 		if other, ok := declaredTargets[resolved.target]; ok && other != resolved.Key {
 			if _, desired := desiredManagedKeys[other]; desired {
 				plan.Changes = append(plan.Changes, conflictChange(resolved, "target already declared by "+other, false))
@@ -308,6 +312,15 @@ func isPathAncestor(parent string, child string) bool {
 	parent = normalizedConfigPath(parent)
 	child = normalizedConfigPath(child)
 	return parent != child && strings.HasPrefix(child, parent+"/")
+}
+
+func overlappingManagedTarget(target string, usedTargets map[string]string) (string, bool) {
+	for _, usedTarget := range sortedStringKeys(usedTargets) {
+		if isPathAncestor(usedTarget, target) || isPathAncestor(target, usedTarget) {
+			return usedTargets[usedTarget], true
+		}
+	}
+	return "", false
 }
 
 func conflictChange(file resolvedManagedFile, reason string, forceAllowed bool) Change {

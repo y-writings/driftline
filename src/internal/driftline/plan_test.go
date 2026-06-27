@@ -408,6 +408,83 @@ config = { path = "same.txt", mode = "managed" }
 	}
 }
 
+func TestBuildPlanConflictsWhenManagedTargetPathsOverlap(t *testing.T) {
+	tests := []struct {
+		name       string
+		manifest   string
+		targets    string
+		conflictID string
+		target     string
+		reason     string
+	}{
+		{
+			name: "parent path before child path",
+			manifest: `version = 2
+
+[files.a]
+parent = { path = "source-parent.txt", mode = "managed" }
+
+[files.b]
+child = { path = "source-child.txt", mode = "managed" }
+`,
+			targets: `[files.a]
+parent = "dir"
+
+[files.b]
+child = "dir/file"
+`,
+			conflictID: "b.child",
+			target:     "dir/file",
+			reason:     "overlaps with a.parent",
+		},
+		{
+			name: "child path before parent path",
+			manifest: `version = 2
+
+[files.a]
+child = { path = "source-child.txt", mode = "managed" }
+
+[files.b]
+parent = { path = "source-parent.txt", mode = "managed" }
+`,
+			targets: `[files.a]
+child = "dir/file"
+
+[files.b]
+parent = "dir"
+`,
+			conflictID: "b.parent",
+			target:     "dir",
+			reason:     "overlaps with a.child",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			targetDir := t.TempDir()
+			writePlanFile(t, targetDir, TargetConfigPath, targetConfigTOML(tt.targets))
+			client := newPlanSourceClient(tt.manifest, map[string]string{
+				"source-parent.txt": "parent\n",
+				"source-child.txt":  "child\n",
+			})
+
+			plan, err := BuildPlan(PlanOptions{TargetDir: targetDir, Source: client})
+			if err != nil {
+				t.Fatalf("build plan failed: %v", err)
+			}
+
+			conflict := planChange(t, plan, StatusConflict, tt.conflictID)
+			if conflict.Target != tt.target || !strings.Contains(conflict.Reason, tt.reason) || conflict.ForceAllowed {
+				t.Fatalf("unexpected overlapping target conflict: %#v", conflict)
+			}
+			if !plan.HasConflicts() {
+				t.Fatalf("plan should report conflicts: %#v", plan.Changes)
+			}
+			assertPlanDoesNotHaveChange(t, plan, StatusAdd, tt.conflictID)
+		})
+	}
+}
+
 func targetConfigTOML(files string) string {
 	return `version = 2
 
