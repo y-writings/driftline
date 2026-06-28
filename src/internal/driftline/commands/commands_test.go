@@ -18,6 +18,20 @@ type commandFakeSourceClient struct {
 	files         map[string][]byte
 }
 
+type sourceAccessFailingClient struct{}
+
+func (sourceAccessFailingClient) ResolveDefaultRef(repository string) (string, string, error) {
+	return "", "", errors.New("source should not be accessed")
+}
+
+func (sourceAccessFailingClient) ResolveRef(repository string, ref string) (string, error) {
+	return "", errors.New("source should not be accessed")
+}
+
+func (sourceAccessFailingClient) ReadFile(repository string, commit string, path string) ([]byte, error) {
+	return nil, errors.New("source should not be accessed")
+}
+
 func (f commandFakeSourceClient) ResolveDefaultRef(repository string) (string, string, error) {
 	return f.defaultRef, f.defaultCommit, nil
 }
@@ -95,6 +109,17 @@ func TestInitRefPreservesInputRef(t *testing.T) {
 	}
 	if got := readFile(t, targetDir, driftline.TargetConfigPath); !strings.Contains(got, `ref = "feature/foo"`) {
 		t.Fatalf("expected input ref to be preserved:\n%s", got)
+	}
+}
+
+func TestInitFailsOnExistingTargetConfigBeforeSourceAccess(t *testing.T) {
+	targetDir := t.TempDir()
+	writeFile(t, targetDir, driftline.TargetConfigPath, "existing\n")
+
+	var stdout, stderr bytes.Buffer
+	err := (Runner{Source: sourceAccessFailingClient{}}).Run([]string{"init", "y-writings/source-repo", "--target-dir", targetDir}, &stdout, &stderr)
+	if err == nil || !strings.Contains(err.Error(), "target config already exists") {
+		t.Fatalf("expected target config error before source access, got %v", err)
 	}
 }
 

@@ -61,67 +61,16 @@ func runInit(source driftline.SourceClient, opts InitOptions, stdout io.Writer) 
 	if err != nil {
 		return err
 	}
-	templates, err := collectInitialTemplates(source, opts, commit, manifest)
-	if err != nil {
+	if err := driftline.AdoptInitialTargetRepository(driftline.InitialAdoptionOptions{
+		Root:         opts.TargetDir,
+		Source:       source,
+		Repository:   opts.Repository,
+		Commit:       commit,
+		Manifest:     manifest,
+		TargetConfig: config,
+	}); err != nil {
 		return err
-	}
-	if err := driftline.WriteTargetConfig(configPath, config); err != nil {
-		return err
-	}
-	for _, template := range templates {
-		if err := driftline.WriteFileBytes(template.targetPath, template.sourceBytes); err != nil {
-			return err
-		}
 	}
 	fmt.Fprintf(stdout, "created .driftline-target.toml from %s@%s\n", opts.Repository, commit)
 	return nil
-}
-
-type initialTemplate struct {
-	targetPath  string
-	sourceBytes []byte
-}
-
-func collectInitialTemplates(source driftline.SourceClient, opts InitOptions, commit string, manifest driftline.SourceManifest) ([]initialTemplate, error) {
-	templates := []initialTemplate{}
-	for _, entry := range driftline.SourceEntries(manifest) {
-		if driftline.IsReservedTargetPath(entry.Path) {
-			return nil, fmt.Errorf("reserved target path %q", entry.Path)
-		}
-		targetPath, err := driftline.PathWithin(opts.TargetDir, entry.Path, fmt.Sprintf("target %q", entry.Key))
-		if err != nil {
-			return nil, err
-		}
-		exists, err := fileExists(targetPath)
-		if err != nil {
-			return nil, err
-		}
-		switch entry.Mode {
-		case driftline.ModeManaged:
-			if exists {
-				return nil, fmt.Errorf("managed target already exists: %s", entry.Path)
-			}
-		case driftline.ModeTemplate:
-			if exists {
-				continue
-			}
-			data, err := source.ReadFile(opts.Repository, commit, entry.Path)
-			if err != nil {
-				return nil, fmt.Errorf("source template not found in source repository: %w", err)
-			}
-			templates = append(templates, initialTemplate{targetPath: targetPath, sourceBytes: data})
-		}
-	}
-	return templates, nil
-}
-
-func fileExists(path string) (bool, error) {
-	_, err := os.Lstat(path)
-	if err == nil {
-		return true, nil
-	}
-	if errors.Is(err, os.ErrNotExist) {
-		return false, nil
-	}
-	return false, err
 }
