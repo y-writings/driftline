@@ -16,7 +16,7 @@ The current `runInit` command owns too much Target Repository behavior. It valid
 
 Introduce a deep Initial adoption Module in the `driftline` package.
 
-The Module must concentrate Target Repository initial adoption behavior while leaving Source Repository ref resolution, Source Config loading, CLI option parsing, and user-facing output in the command layer.
+The Module must concentrate Target Repository initial adoption behavior while leaving Source Repository ref resolution, Source Config loading, CLI option parsing, the early existing Target manifest check, and user-facing output in the command layer.
 
 ## Non-Goals
 
@@ -39,13 +39,14 @@ The Module must concentrate Target Repository initial adoption behavior while le
 
 ## Design
 
-Add an Initial adoption Module in the `driftline` package. The command layer calls it after resolving the Source Repository ref, reading the Source Config, and deriving the Target manifest.
+Add an Initial adoption Module in the `driftline` package. The command layer keeps the existing local Target manifest check before Source Repository access so an already-initialized Target Repository fails deterministically without network access. The command layer calls the Module after resolving the Source Repository ref, reading the Source Config, and deriving the Target manifest.
 
 Conceptual init flow:
 
 ```text
 runInit
   validate CLI-level repository and target directory inputs
+  reject existing Target manifest before Source Repository access
   resolve Source Repository ref and commit
   read and parse Source Config
   derive initial Target manifest from Source Config
@@ -122,6 +123,7 @@ The exact Go names can be chosen during implementation, but the Module must repr
 - `init` does not record Template files in the Target manifest.
 - `init` does not copy Managed file bytes.
 - `init` fails before writing when the Target manifest already exists.
+- `init` reports an existing Target manifest before Source Repository access.
 - `init` fails before writing when a Managed file default target already exists, including broken symlinks.
 - `init` rejects reserved Target Repository paths.
 - `init` prints the same success message as today.

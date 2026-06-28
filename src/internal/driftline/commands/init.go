@@ -1,9 +1,11 @@
 package commands
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
 	"github.com/y-writings/driftline/src/internal/driftline"
 )
@@ -21,6 +23,12 @@ func runInit(source driftline.SourceClient, opts InitOptions, stdout io.Writer) 
 	}
 	if !info.IsDir() {
 		return fmt.Errorf("target directory must be a directory: %s", opts.TargetDir)
+	}
+	configPath := filepath.Join(opts.TargetDir, driftline.TargetConfigPath)
+	if _, err := os.Stat(configPath); err == nil {
+		return fmt.Errorf("target config already exists: %s", driftline.TargetConfigPath)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
 	}
 
 	ref := opts.Ref

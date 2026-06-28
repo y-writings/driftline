@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Move Target Repository initial adoption sequencing out of `runInit` into a Deep Module with commit-last Target manifest safety.
+**Goal:** Move Target Repository initial adoption sequencing out of `runInit` into a Deep Module with commit-last Target manifest safety while preserving the existing no-network failure for already-initialized Target Repositories.
 
-**Architecture:** Add an Initial adoption Module in the `driftline` package. `runInit` continues to own CLI validation, Source Repository ref resolution, Source Config loading, Target manifest derivation, and stdout. The new Module owns Target Repository preflight, missing Template file placement, Target manifest temp preparation, and final Target manifest commit.
+**Architecture:** Add an Initial adoption Module in the `driftline` package. `runInit` continues to own CLI validation, the early existing Target manifest check, Source Repository ref resolution, Source Config loading, Target manifest derivation, and stdout. The new Module owns Target Repository adoption preflight, missing Template file placement, Target manifest temp preparation, and final Target manifest commit.
 
 **Tech Stack:** Go, standard library filesystem APIs, existing TOML config writer, existing `SourceClient`, existing `go test ./...` suite.
 
@@ -466,7 +466,48 @@ Expected: PASS.
 - Modify: `src/internal/driftline/commands/init.go`
 - Test: `src/internal/driftline/commands/commands_test.go`
 
-- [ ] **Step 1: Replace command-owned Target Repository adoption logic**
+- [ ] **Step 1: Add a regression test for existing Target manifest before Source access**
+
+Add this helper type near `commandFakeSourceClient` in `src/internal/driftline/commands/commands_test.go`:
+
+```go
+type sourceAccessFailingClient struct{}
+
+func (sourceAccessFailingClient) ResolveDefaultRef(repository string) (string, string, error) {
+	return "", "", errors.New("source should not be accessed")
+}
+
+func (sourceAccessFailingClient) ResolveRef(repository string, ref string) (string, error) {
+	return "", errors.New("source should not be accessed")
+}
+
+func (sourceAccessFailingClient) ReadFile(repository string, commit string, path string) ([]byte, error) {
+	return nil, errors.New("source should not be accessed")
+}
+```
+
+Add this test near the other init tests:
+
+```go
+func TestInitFailsOnExistingTargetConfigBeforeSourceAccess(t *testing.T) {
+	targetDir := t.TempDir()
+	writeFile(t, targetDir, driftline.TargetConfigPath, "existing\n")
+
+	var stdout, stderr bytes.Buffer
+	err := (Runner{Source: sourceAccessFailingClient{}}).Run([]string{"init", "y-writings/source-repo", "--target-dir", targetDir}, &stdout, &stderr)
+	if err == nil || !strings.Contains(err.Error(), "target config already exists") {
+		t.Fatalf("expected target config error before source access, got %v", err)
+	}
+}
+```
+
+- [ ] **Step 2: Run the regression test to verify it fails**
+
+Run: `go test ./src/internal/driftline/commands -run TestInitFailsOnExistingTargetConfigBeforeSourceAccess -count=1`
+
+Expected: FAIL because `runInit` reaches Source Repository access before reporting the existing Target manifest.
+
+- [ ] **Step 3: Replace command-owned Target Repository adoption logic**
 
 Replace `src/internal/driftline/commands/init.go` with:
 
@@ -474,9 +515,11 @@ Replace `src/internal/driftline/commands/init.go` with:
 package commands
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
 	"github.com/y-writings/driftline/src/internal/driftline"
 )
@@ -494,6 +537,12 @@ func runInit(source driftline.SourceClient, opts InitOptions, stdout io.Writer) 
 	}
 	if !info.IsDir() {
 		return fmt.Errorf("target directory must be a directory: %s", opts.TargetDir)
+	}
+	configPath := filepath.Join(opts.TargetDir, driftline.TargetConfigPath)
+	if _, err := os.Stat(configPath); err == nil {
+		return fmt.Errorf("target config already exists: %s", driftline.TargetConfigPath)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
 	}
 
 	ref := opts.Ref
@@ -541,13 +590,13 @@ func runInit(source driftline.SourceClient, opts InitOptions, stdout io.Writer) 
 }
 ```
 
-- [ ] **Step 2: Run existing init command tests**
+- [ ] **Step 4: Run existing init command tests**
 
 Run: `go test ./src/internal/driftline/commands -run TestInit -count=1`
 
 Expected: PASS.
 
-- [ ] **Step 3: Run command tests covering removed surfaces**
+- [ ] **Step 5: Run command tests covering removed surfaces**
 
 Run: `go test ./src/internal/driftline/commands -run 'TestInit|TestHelpOmitsPruneAndPruneCommandIsRemoved|TestParseOptions' -count=1`
 
