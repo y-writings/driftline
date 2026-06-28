@@ -1,5 +1,7 @@
 package driftline
 
+import "sort"
+
 type FileMode string
 
 const (
@@ -67,4 +69,18 @@ type Change struct {
 	WritesTarget  bool
 	DeletesTarget bool
 	ForceAllowed  bool
+}
+
+func SortedChanges(changes []Change) []Change {
+	out := append([]Change(nil), changes...)
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Status != out[j].Status {
+			return out[i].Status < out[j].Status
+		}
+		if out[i].ID != out[j].ID {
+			return out[i].ID < out[j].ID
+		}
+		return out[i].Target < out[j].Target
+	})
+	return out
 }

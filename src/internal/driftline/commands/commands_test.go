@@ -226,6 +226,11 @@ ci = { path = ".github/workflows/ci.yaml", mode = "managed" }
 	if err := runner.Run([]string{"update", "--target-dir", targetDir}, &stdout, &stderr); err != nil {
 		t.Fatalf("update failed: %v", err)
 	}
+	for _, want := range []string{"target-config-add github-workflow.ci: add target config entry", "add github-workflow.ci: target file is missing"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("update output missing %q: %q", want, stdout.String())
+		}
+	}
 	if got := readFile(t, targetDir, ".github/workflows/ci.yaml"); got != "ci\n" {
 		t.Fatalf("unexpected copied workflow: %q", got)
 	}
