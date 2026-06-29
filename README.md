@@ -47,6 +47,7 @@ config = { path = ".mise/config.toml", mode = "template" }
 
 Source config rules:
 
+- Source config is parsed as TOML 1.1.
 - `version = 2` is required.
 - `[files.<group>]` groups related files.
 - Each file is keyed by stable file ID inside its group.
@@ -76,6 +77,7 @@ ci = ".github/workflows/project-ci.yaml"
 
 Target config rules:
 
+- Target config is parsed as TOML 1.1.
 - `version = 2` is required.
 - `[source]` contains `repository` and `ref`.
 - `[files.<group>]` contains managed files only.
