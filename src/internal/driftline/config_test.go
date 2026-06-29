@@ -37,6 +37,30 @@ config = { path = ".mise/config.toml", mode = "template" }
 	}
 }
 
+func TestLoadSourceManifestAcceptsTOML11MultilineInlineTables(t *testing.T) {
+	manifest, err := LoadSourceManifestBytes([]byte(`version = 2
+
+[files.github-workflow]
+ci = {
+  path = ".github/workflows/ci.yaml",
+  mode = "managed",
+}
+release = {
+  path = ".github/workflows/release.yaml",
+  mode = "template",
+}
+`))
+	if err != nil {
+		t.Fatalf("load source manifest failed: %v", err)
+	}
+	if got := manifest.Files["github-workflow"]["ci"].Mode; got != ModeManaged {
+		t.Fatalf("unexpected ci mode: %q", got)
+	}
+	if got := manifest.Files["github-workflow"]["release"].Mode; got != ModeTemplate {
+		t.Fatalf("unexpected release mode: %q", got)
+	}
+}
+
 func TestLoadSourceManifestRejectsInvalidTOMLModel(t *testing.T) {
 	for name, input := range map[string]string{
 		"unknown root field":        "version = 2\nextra = true\n",
