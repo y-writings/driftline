@@ -289,6 +289,43 @@ func TestInitialAdoptionDoesNotCommitTargetConfigWhenTemplateWriteFails(t *testi
 	}
 }
 
+func TestInitialAdoptionDoesNotOverwriteForcedManagedTargetWhenTemplateWriteFails(t *testing.T) {
+	root := t.TempDir()
+	writeInitialAdoptionTestFile(t, root, ".github/workflows/ci.yaml", "target-owned\n")
+	writeInitialAdoptionTestFile(t, root, "templates/existing.txt", "target-template\n")
+	source := &fakeInitialAdoptionSource{files: map[string][]byte{
+		"y-writings/source-repo@abc123:.github/workflows/ci.yaml": []byte("source\n"),
+		"y-writings/source-repo@abc123:templates/missing.txt":     []byte("missing template\n"),
+	}}
+
+	err := initialAdoption{
+		opts: InitialAdoptionOptions{
+			Root:         root,
+			Source:       source,
+			Repository:   "y-writings/source-repo",
+			Commit:       "abc123",
+			Manifest:     initialAdoptionManifest(),
+			TargetConfig: initialAdoptionTargetConfig(),
+			ForceKey:     "github-workflow.ci",
+		},
+		writeFileBytes: func(target string, data []byte) error {
+			if filepath.Base(target) == "missing.txt" {
+				return errors.New("template write failed")
+			}
+			return WriteFileBytes(target, data)
+		},
+	}.adopt()
+	if err == nil || err.Error() != "template write failed" {
+		t.Fatalf("expected template write failure, got %v", err)
+	}
+	if got := readInitialAdoptionTestFile(t, root, ".github/workflows/ci.yaml"); got != "target-owned\n" {
+		t.Fatalf("forced managed target must stay untouched after template failure, got %q", got)
+	}
+	if initialAdoptionTestPathExists(t, root, TargetConfigPath) {
+		t.Fatal("target manifest must not be committed after template write failure")
+	}
+}
+
 func TestInitialAdoptionLeavesTemplatesWhenTargetConfigCommitFails(t *testing.T) {
 	root := t.TempDir()
 	source := &fakeInitialAdoptionSource{files: map[string][]byte{

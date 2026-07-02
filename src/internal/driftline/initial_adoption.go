@@ -32,6 +32,11 @@ type initialAdoptionWrite struct {
 	sourceBytes []byte
 }
 
+type initialAdoptionWrites struct {
+	templates     []initialAdoptionWrite
+	forcedManaged []initialAdoptionWrite
+}
+
 func (a initialAdoption) adopt() error {
 	opts := a.opts
 	root := opts.Root
@@ -75,33 +80,41 @@ func (a initialAdoption) adopt() error {
 	if writeFileBytes == nil {
 		writeFileBytes = WriteFileBytes
 	}
-	for _, write := range writes {
+	for _, write := range writes.templates {
 		if err := writeFileBytes(write.targetPath, write.sourceBytes); err != nil {
 			return err
 		}
 	}
-	return commitTargetConfig()
+	if err := commitTargetConfig(); err != nil {
+		return err
+	}
+	for _, write := range writes.forcedManaged {
+		if err := writeFileBytes(write.targetPath, write.sourceBytes); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
-func (a initialAdoption) collectWrites(root string) ([]initialAdoptionWrite, error) {
-	writes := []initialAdoptionWrite{}
+func (a initialAdoption) collectWrites(root string) (initialAdoptionWrites, error) {
+	writes := initialAdoptionWrites{}
 	forceMatched := a.opts.ForceKey == ""
 	for _, entry := range SourceEntries(a.opts.Manifest) {
 		if entry.Mode == ModeManaged && entry.Key == a.opts.ForceKey {
 			forceMatched = true
 		}
 		if IsReservedTargetPath(entry.Path) {
-			return nil, fmt.Errorf("reserved target path %q", entry.Path)
+			return initialAdoptionWrites{}, fmt.Errorf("reserved target path %q", entry.Path)
 		}
 		targetPath, err := PathWithin(root, entry.Path, fmt.Sprintf("target %q", entry.Key))
 		if err != nil {
-			return nil, err
+			return initialAdoptionWrites{}, err
 		}
 		info, err := os.Lstat(targetPath)
 		exists := err == nil
 		if err != nil {
 			if !errors.Is(err, os.ErrNotExist) {
-				return nil, err
+				return initialAdoptionWrites{}, err
 			}
 		}
 
@@ -109,13 +122,13 @@ func (a initialAdoption) collectWrites(root string) ([]initialAdoptionWrite, err
 		case ModeManaged:
 			if exists {
 				if entry.Key != a.opts.ForceKey || info.Mode()&os.ModeSymlink != 0 || info.IsDir() {
-					return nil, fmt.Errorf("managed target already exists: %s", entry.Path)
+					return initialAdoptionWrites{}, fmt.Errorf("managed target already exists: %s", entry.Path)
 				}
 				data, err := a.opts.Source.ReadFile(a.opts.Repository, a.opts.Commit, entry.Path)
 				if err != nil {
-					return nil, fmt.Errorf("source file not found in source repository: %w", err)
+					return initialAdoptionWrites{}, fmt.Errorf("source file not found in source repository: %w", err)
 				}
-				writes = append(writes, initialAdoptionWrite{targetPath: targetPath, sourceBytes: data})
+				writes.forcedManaged = append(writes.forcedManaged, initialAdoptionWrite{targetPath: targetPath, sourceBytes: data})
 			}
 		case ModeTemplate:
 			if exists {
@@ -123,13 +136,13 @@ func (a initialAdoption) collectWrites(root string) ([]initialAdoptionWrite, err
 			}
 			data, err := a.opts.Source.ReadFile(a.opts.Repository, a.opts.Commit, entry.Path)
 			if err != nil {
-				return nil, fmt.Errorf("source template not found in source repository: %w", err)
+				return initialAdoptionWrites{}, fmt.Errorf("source template not found in source repository: %w", err)
 			}
-			writes = append(writes, initialAdoptionWrite{targetPath: targetPath, sourceBytes: data})
+			writes.templates = append(writes.templates, initialAdoptionWrite{targetPath: targetPath, sourceBytes: data})
 		}
 	}
 	if !forceMatched {
-		return nil, fmt.Errorf("force key %q does not match a managed source file", a.opts.ForceKey)
+		return initialAdoptionWrites{}, fmt.Errorf("force key %q does not match a managed source file", a.opts.ForceKey)
 	}
 	return writes, nil
 }
