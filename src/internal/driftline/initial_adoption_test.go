@@ -326,6 +326,38 @@ func TestInitialAdoptionDoesNotOverwriteForcedManagedTargetWhenTemplateWriteFail
 	}
 }
 
+func TestInitialAdoptionRollsBackTargetConfigWhenForcedManagedWriteFails(t *testing.T) {
+	root := t.TempDir()
+	writeInitialAdoptionTestFile(t, root, ".github/workflows/ci.yaml", "target-owned\n")
+	source := &fakeInitialAdoptionSource{files: map[string][]byte{
+		"y-writings/source-repo@abc123:.github/workflows/ci.yaml": []byte("source\n"),
+	}}
+
+	err := initialAdoption{
+		opts: InitialAdoptionOptions{
+			Root:         root,
+			Source:       source,
+			Repository:   "y-writings/source-repo",
+			Commit:       "abc123",
+			Manifest:     initialAdoptionManagedOnlyManifest(),
+			TargetConfig: initialAdoptionManagedOnlyTargetConfig(),
+			ForceKey:     "github-workflow.ci",
+		},
+		writeFileBytes: func(target string, data []byte) error {
+			return errors.New("forced write failed")
+		},
+	}.adopt()
+	if err == nil || err.Error() != "forced write failed" {
+		t.Fatalf("expected forced write failure, got %v", err)
+	}
+	if got := readInitialAdoptionTestFile(t, root, ".github/workflows/ci.yaml"); got != "target-owned\n" {
+		t.Fatalf("forced managed target must stay untouched after forced write failure, got %q", got)
+	}
+	if initialAdoptionTestPathExists(t, root, TargetConfigPath) {
+		t.Fatal("target manifest must be rolled back after forced write failure")
+	}
+}
+
 func TestInitialAdoptionLeavesTemplatesWhenTargetConfigCommitFails(t *testing.T) {
 	root := t.TempDir()
 	source := &fakeInitialAdoptionSource{files: map[string][]byte{

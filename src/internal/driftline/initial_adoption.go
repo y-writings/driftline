@@ -90,6 +90,9 @@ func (a initialAdoption) adopt() error {
 	}
 	for _, write := range writes.forcedManaged {
 		if err := writeFileBytes(write.targetPath, write.sourceBytes); err != nil {
+			if removeErr := os.Remove(configPath); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+				return fmt.Errorf("%w; rollback target config: %v", err, removeErr)
+			}
 			return err
 		}
 	}
