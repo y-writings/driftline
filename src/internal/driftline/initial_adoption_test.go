@@ -329,30 +329,26 @@ func TestInitialAdoptionDoesNotOverwriteForcedManagedTargetWhenTemplateWriteFail
 func TestInitialAdoptionStagesForcedManagedWriteBeforeReplacingTarget(t *testing.T) {
 	root := t.TempDir()
 	writeInitialAdoptionTestFile(t, root, ".github/workflows/ci.yaml", "target-owned\n")
-	workflowsDir := filepath.Join(root, ".github/workflows")
-	if err := os.Chmod(workflowsDir, 0o500); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := os.Chmod(workflowsDir, 0o700); err != nil {
-			t.Fatal(err)
-		}
-	})
 	source := &fakeInitialAdoptionSource{files: map[string][]byte{
 		"y-writings/source-repo@abc123:.github/workflows/ci.yaml": []byte("source\n"),
 	}}
 
-	err := AdoptInitialTargetRepository(InitialAdoptionOptions{
-		Root:         root,
-		Source:       source,
-		Repository:   "y-writings/source-repo",
-		Commit:       "abc123",
-		Manifest:     initialAdoptionManagedOnlyManifest(),
-		TargetConfig: initialAdoptionManagedOnlyTargetConfig(),
-		ForceKey:     "github-workflow.ci",
-	})
-	if err == nil {
-		t.Fatal("expected forced staged write failure")
+	err := initialAdoption{
+		opts: InitialAdoptionOptions{
+			Root:         root,
+			Source:       source,
+			Repository:   "y-writings/source-repo",
+			Commit:       "abc123",
+			Manifest:     initialAdoptionManagedOnlyManifest(),
+			TargetConfig: initialAdoptionManagedOnlyTargetConfig(),
+			ForceKey:     "github-workflow.ci",
+		},
+		writeForcedManagedFileBytes: func(target string, data []byte) error {
+			return errors.New("forced staging failed")
+		},
+	}.adopt()
+	if err == nil || err.Error() != "forced staging failed" {
+		t.Fatalf("expected forced staging failure, got %v", err)
 	}
 	if got := readInitialAdoptionTestFile(t, root, ".github/workflows/ci.yaml"); got != "target-owned\n" {
 		t.Fatalf("forced managed target must stay untouched when staging fails, got %q", got)

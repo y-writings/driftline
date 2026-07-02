@@ -22,9 +22,10 @@ func AdoptInitialTargetRepository(opts InitialAdoptionOptions) error {
 }
 
 type initialAdoption struct {
-	opts                     InitialAdoptionOptions
-	prepareTargetConfigWrite func(path string, config TargetConfig) (func() error, func() error, error)
-	writeFileBytes           func(target string, data []byte) error
+	opts                        InitialAdoptionOptions
+	prepareTargetConfigWrite    func(path string, config TargetConfig) (func() error, func() error, error)
+	writeFileBytes              func(target string, data []byte) error
+	writeForcedManagedFileBytes func(target string, data []byte) error
 }
 
 type initialAdoptionWrite struct {
@@ -88,8 +89,12 @@ func (a initialAdoption) adopt() error {
 	if err := commitTargetConfig(); err != nil {
 		return err
 	}
+	writeForcedManaged := a.writeForcedManagedFileBytes
+	if writeForcedManaged == nil {
+		writeForcedManaged = writeForcedManagedFileBytes
+	}
 	for _, write := range writes.forcedManaged {
-		if err := writeForcedManagedFileBytes(write.targetPath, write.sourceBytes); err != nil {
+		if err := writeForcedManaged(write.targetPath, write.sourceBytes); err != nil {
 			if removeErr := os.Remove(configPath); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
 				return fmt.Errorf("%w; rollback target config: %v", err, removeErr)
 			}
