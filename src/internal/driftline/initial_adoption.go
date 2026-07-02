@@ -89,13 +89,47 @@ func (a initialAdoption) adopt() error {
 		return err
 	}
 	for _, write := range writes.forcedManaged {
-		if err := writeFileBytes(write.targetPath, write.sourceBytes); err != nil {
+		if err := writeForcedManagedFileBytes(write.targetPath, write.sourceBytes); err != nil {
 			if removeErr := os.Remove(configPath); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
 				return fmt.Errorf("%w; rollback target config: %v", err, removeErr)
 			}
 			return err
 		}
 	}
+	return nil
+}
+
+func writeForcedManagedFileBytes(target string, data []byte) error {
+	info, err := os.Lstat(target)
+	if err != nil {
+		return fmt.Errorf("stat forced target: %w", err)
+	}
+	temp, err := os.CreateTemp(filepath.Dir(target), ".driftline-forced-*.tmp")
+	if err != nil {
+		return fmt.Errorf("create forced target temp file: %w", err)
+	}
+	tempName := temp.Name()
+	committed := false
+	defer func() {
+		if !committed {
+			_ = os.Remove(tempName)
+		}
+	}()
+	if _, err := temp.Write(data); err != nil {
+		temp.Close()
+		return fmt.Errorf("write forced target temp file: %w", err)
+	}
+	if err := temp.Chmod(info.Mode().Perm()); err != nil {
+		temp.Close()
+		return fmt.Errorf("chmod forced target temp file: %w", err)
+	}
+	if err := temp.Close(); err != nil {
+		return fmt.Errorf("close forced target temp file: %w", err)
+	}
+	if err := os.Rename(tempName, target); err != nil {
+		return fmt.Errorf("replace forced target: %w", err)
+	}
+	committed = true
 	return nil
 }
 

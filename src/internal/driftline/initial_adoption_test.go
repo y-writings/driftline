@@ -326,35 +326,39 @@ func TestInitialAdoptionDoesNotOverwriteForcedManagedTargetWhenTemplateWriteFail
 	}
 }
 
-func TestInitialAdoptionRollsBackTargetConfigWhenForcedManagedWriteFails(t *testing.T) {
+func TestInitialAdoptionStagesForcedManagedWriteBeforeReplacingTarget(t *testing.T) {
 	root := t.TempDir()
 	writeInitialAdoptionTestFile(t, root, ".github/workflows/ci.yaml", "target-owned\n")
+	workflowsDir := filepath.Join(root, ".github/workflows")
+	if err := os.Chmod(workflowsDir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chmod(workflowsDir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	})
 	source := &fakeInitialAdoptionSource{files: map[string][]byte{
 		"y-writings/source-repo@abc123:.github/workflows/ci.yaml": []byte("source\n"),
 	}}
 
-	err := initialAdoption{
-		opts: InitialAdoptionOptions{
-			Root:         root,
-			Source:       source,
-			Repository:   "y-writings/source-repo",
-			Commit:       "abc123",
-			Manifest:     initialAdoptionManagedOnlyManifest(),
-			TargetConfig: initialAdoptionManagedOnlyTargetConfig(),
-			ForceKey:     "github-workflow.ci",
-		},
-		writeFileBytes: func(target string, data []byte) error {
-			return errors.New("forced write failed")
-		},
-	}.adopt()
-	if err == nil || err.Error() != "forced write failed" {
-		t.Fatalf("expected forced write failure, got %v", err)
+	err := AdoptInitialTargetRepository(InitialAdoptionOptions{
+		Root:         root,
+		Source:       source,
+		Repository:   "y-writings/source-repo",
+		Commit:       "abc123",
+		Manifest:     initialAdoptionManagedOnlyManifest(),
+		TargetConfig: initialAdoptionManagedOnlyTargetConfig(),
+		ForceKey:     "github-workflow.ci",
+	})
+	if err == nil {
+		t.Fatal("expected forced staged write failure")
 	}
 	if got := readInitialAdoptionTestFile(t, root, ".github/workflows/ci.yaml"); got != "target-owned\n" {
-		t.Fatalf("forced managed target must stay untouched after forced write failure, got %q", got)
+		t.Fatalf("forced managed target must stay untouched when staging fails, got %q", got)
 	}
 	if initialAdoptionTestPathExists(t, root, TargetConfigPath) {
-		t.Fatal("target manifest must be rolled back after forced write failure")
+		t.Fatal("target manifest must be rolled back after forced staging failure")
 	}
 }
 
