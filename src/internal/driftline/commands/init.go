@@ -68,6 +68,7 @@ func runInit(source driftline.SourceClient, opts InitOptions, stdout io.Writer) 
 		Commit:       commit,
 		Manifest:     manifest,
 		TargetConfig: config,
+		ForceKey:     opts.ForceKey,
 	}); err != nil {
 		return err
 	}

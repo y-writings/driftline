@@ -78,6 +78,7 @@ type InitOptions struct {
 	Repository string
 	Ref        string
 	TargetDir  string
+	ForceKey   string
 }
 
 func parseTargetOptions(args []string) (TargetOptions, error) {
@@ -132,6 +133,15 @@ func parseInitOptions(args []string) (InitOptions, error) {
 			opts.TargetDir = value
 			continue
 		}
+		if value, ok, err := parseStringOption(args, &i, "force"); err != nil {
+			return opts, err
+		} else if ok {
+			if opts.ForceKey != "" {
+				return opts, fmt.Errorf("--force may be provided once")
+			}
+			opts.ForceKey = value
+			continue
+		}
 		if len(args[i]) > 0 && args[i][0] == '-' {
 			return opts, fmt.Errorf("unknown option %q", args[i])
 		}
@@ -181,7 +191,7 @@ examples:
 options:
   --target-dir string  target repository directory (default ".")
   --ref string         init-only ref to preserve in .driftline-target.toml
-  --force group.file   update-only one-time conflict overwrite
+  --force group.file   one-time managed conflict overwrite
 
 authentication:
   set GITHUB_TOKEN for private repositories or higher rate limits`)

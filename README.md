@@ -106,9 +106,10 @@ driftline update
 
 Use `--target-dir` to operate on another Target Repository path.
 
-If a newly managed file would overwrite an existing target-owned file, driftline reports a conflict and does not write files or config. To overwrite one file once, pass its file key:
+If a newly managed file would overwrite an existing target-owned file, driftline reports a conflict and does not write files or config. During `init` or `update`, overwrite one file once by passing its file key:
 
 ```sh
+driftline init y-writings/source-repo --force github-workflow.ci
 driftline update --force github-workflow.ci
 ```
 

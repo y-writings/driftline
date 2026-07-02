@@ -162,6 +162,32 @@ release = { path = ".github/workflows/release.yaml", mode = "template" }
 	}
 }
 
+func TestInitForceOverwritesExistingManagedTargetOnce(t *testing.T) {
+	targetDir := t.TempDir()
+	writeFile(t, targetDir, ".github/workflows/ci.yaml", "target-owned\n")
+	client := newCommandSourceClient("main", `version = 2
+
+[files.github-workflow]
+ci = { path = ".github/workflows/ci.yaml", mode = "managed" }
+`, map[string]string{".github/workflows/ci.yaml": "source\n"})
+
+	var stdout, stderr bytes.Buffer
+	err := (Runner{Source: client}).Run([]string{"init", "y-writings/source-repo", "--target-dir", targetDir, "--force", "github-workflow.ci"}, &stdout, &stderr)
+	if err != nil {
+		t.Fatalf("forced init failed: %v", err)
+	}
+	if got := readFile(t, targetDir, ".github/workflows/ci.yaml"); got != "source\n" {
+		t.Fatalf("forced init should overwrite target once, got %q", got)
+	}
+	config := readFile(t, targetDir, driftline.TargetConfigPath)
+	if !strings.Contains(config, `[files.github-workflow]`) || strings.Contains(config, "force") {
+		t.Fatalf("target config should contain only path entry, no force state:\n%s", config)
+	}
+	if !strings.Contains(stdout.String(), "created .driftline-target.toml from y-writings/source-repo@0123456789abcdef0123456789abcdef01234567") {
+		t.Fatalf("unexpected stdout: %q", stdout.String())
+	}
+}
+
 func TestInitRejectsSourceFilesTargetingReservedPaths(t *testing.T) {
 	for name, sourceManifest := range map[string]string{
 		"managed target config": `version = 2

@@ -14,6 +14,7 @@ type InitialAdoptionOptions struct {
 	Commit       string
 	Manifest     SourceManifest
 	TargetConfig TargetConfig
+	ForceKey     string
 }
 
 func AdoptInitialTargetRepository(opts InitialAdoptionOptions) error {
@@ -26,7 +27,7 @@ type initialAdoption struct {
 	writeFileBytes           func(target string, data []byte) error
 }
 
-type initialAdoptionTemplate struct {
+type initialAdoptionWrite struct {
 	targetPath  string
 	sourceBytes []byte
 }
@@ -40,6 +41,11 @@ func (a initialAdoption) adopt() error {
 	if opts.Source == nil {
 		return errors.New("source client is required")
 	}
+	if opts.ForceKey != "" {
+		if err := validateForceKey(opts.ForceKey); err != nil {
+			return err
+		}
+	}
 
 	configPath := filepath.Join(root, TargetConfigPath)
 	exists, err := initialAdoptionPathExists(configPath)
@@ -50,7 +56,7 @@ func (a initialAdoption) adopt() error {
 		return fmt.Errorf("target config already exists: %s", TargetConfigPath)
 	}
 
-	templates, err := a.collectTemplates(root)
+	writes, err := a.collectWrites(root)
 	if err != nil {
 		return err
 	}
@@ -69,17 +75,21 @@ func (a initialAdoption) adopt() error {
 	if writeFileBytes == nil {
 		writeFileBytes = WriteFileBytes
 	}
-	for _, template := range templates {
-		if err := writeFileBytes(template.targetPath, template.sourceBytes); err != nil {
+	for _, write := range writes {
+		if err := writeFileBytes(write.targetPath, write.sourceBytes); err != nil {
 			return err
 		}
 	}
 	return commitTargetConfig()
 }
 
-func (a initialAdoption) collectTemplates(root string) ([]initialAdoptionTemplate, error) {
-	templates := []initialAdoptionTemplate{}
+func (a initialAdoption) collectWrites(root string) ([]initialAdoptionWrite, error) {
+	writes := []initialAdoptionWrite{}
+	forceMatched := a.opts.ForceKey == ""
 	for _, entry := range SourceEntries(a.opts.Manifest) {
+		if entry.Mode == ModeManaged && entry.Key == a.opts.ForceKey {
+			forceMatched = true
+		}
 		if IsReservedTargetPath(entry.Path) {
 			return nil, fmt.Errorf("reserved target path %q", entry.Path)
 		}
@@ -87,15 +97,25 @@ func (a initialAdoption) collectTemplates(root string) ([]initialAdoptionTemplat
 		if err != nil {
 			return nil, err
 		}
-		exists, err := initialAdoptionPathExists(targetPath)
+		info, err := os.Lstat(targetPath)
+		exists := err == nil
 		if err != nil {
-			return nil, err
+			if !errors.Is(err, os.ErrNotExist) {
+				return nil, err
+			}
 		}
 
 		switch entry.Mode {
 		case ModeManaged:
 			if exists {
-				return nil, fmt.Errorf("managed target already exists: %s", entry.Path)
+				if entry.Key != a.opts.ForceKey || info.Mode()&os.ModeSymlink != 0 || info.IsDir() {
+					return nil, fmt.Errorf("managed target already exists: %s", entry.Path)
+				}
+				data, err := a.opts.Source.ReadFile(a.opts.Repository, a.opts.Commit, entry.Path)
+				if err != nil {
+					return nil, fmt.Errorf("source file not found in source repository: %w", err)
+				}
+				writes = append(writes, initialAdoptionWrite{targetPath: targetPath, sourceBytes: data})
 			}
 		case ModeTemplate:
 			if exists {
@@ -105,10 +125,13 @@ func (a initialAdoption) collectTemplates(root string) ([]initialAdoptionTemplat
 			if err != nil {
 				return nil, fmt.Errorf("source template not found in source repository: %w", err)
 			}
-			templates = append(templates, initialAdoptionTemplate{targetPath: targetPath, sourceBytes: data})
+			writes = append(writes, initialAdoptionWrite{targetPath: targetPath, sourceBytes: data})
 		}
 	}
-	return templates, nil
+	if !forceMatched {
+		return nil, fmt.Errorf("force key %q does not match a managed source file", a.opts.ForceKey)
+	}
+	return writes, nil
 }
 
 func initialAdoptionPathExists(path string) (bool, error) {
