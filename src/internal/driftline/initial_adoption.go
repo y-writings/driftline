@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 type InitialAdoptionOptions struct {
@@ -94,6 +95,9 @@ func (a initialAdoption) collectTemplates(root string) ([]initialAdoptionTemplat
 		if err != nil {
 			return nil, err
 		}
+		if err := initialAdoptionRejectSymlinkAncestors(root, targetPath, entry.Path); err != nil {
+			return nil, err
+		}
 		info, exists, err := initialAdoptionPathInfo(targetPath)
 		if err != nil {
 			return nil, err
@@ -125,6 +129,40 @@ func (a initialAdoption) collectTemplates(root string) ([]initialAdoptionTemplat
 		templates = append(templates, initialAdoptionTemplate{targetPath: template.targetPath, sourceBytes: data})
 	}
 	return templates, nil
+}
+
+func initialAdoptionRejectSymlinkAncestors(root string, path string, target string) error {
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return err
+	}
+	rel, err := filepath.Rel(rootAbs, path)
+	if err != nil {
+		return err
+	}
+	dir := filepath.Dir(rel)
+	if dir == "." {
+		return nil
+	}
+
+	current := rootAbs
+	for _, part := range strings.Split(dir, string(os.PathSeparator)) {
+		current = filepath.Join(current, part)
+		info, err := os.Lstat(current)
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("target path contains symlink: %s", target)
+		}
+		if !info.IsDir() {
+			return fmt.Errorf("target path parent is not a directory: %s", target)
+		}
+	}
+	return nil
 }
 
 func initialAdoptionPathInfo(path string) (os.FileInfo, bool, error) {

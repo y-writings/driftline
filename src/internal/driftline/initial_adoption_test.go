@@ -303,6 +303,21 @@ func TestAdoptInitialTargetRepositoryForceRejectsNonRegularManagedTargets(t *tes
 			},
 		},
 		{
+			name: "symlink ancestor",
+			setup: func(t *testing.T, root string) {
+				outside := t.TempDir()
+				if err := os.MkdirAll(filepath.Join(outside, "workflows"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(outside, "workflows/ci.yaml"), []byte("outside\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(outside, filepath.Join(root, ".github")); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
 			name: "parent path is file",
 			setup: func(t *testing.T, root string) {
 				writeInitialAdoptionTestFile(t, root, ".github", "not a directory\n")
