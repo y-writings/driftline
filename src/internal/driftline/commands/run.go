@@ -78,6 +78,7 @@ type InitOptions struct {
 	Repository string
 	Ref        string
 	TargetDir  string
+	Force      bool
 }
 
 func parseTargetOptions(args []string) (TargetOptions, error) {
@@ -106,6 +107,9 @@ func parseUpdateOptions(args []string) (UpdateOptions, error) {
 		if value, ok, err := parseStringOption(args, &i, "force"); err != nil {
 			return opts, err
 		} else if ok {
+			if value == "" {
+				return opts, fmt.Errorf("--force requires a value")
+			}
 			if opts.ForceKey != "" {
 				return opts, fmt.Errorf("--force may be provided once")
 			}
@@ -130,6 +134,15 @@ func parseInitOptions(args []string) (InitOptions, error) {
 			return opts, err
 		} else if ok {
 			opts.TargetDir = value
+			continue
+		}
+		if ok, err := parseBoolOption(args, &i, "force"); err != nil {
+			return opts, err
+		} else if ok {
+			if opts.Force {
+				return opts, fmt.Errorf("--force may be provided once")
+			}
+			opts.Force = true
 			continue
 		}
 		if len(args[i]) > 0 && args[i][0] == '-' {
@@ -163,6 +176,19 @@ func parseStringOption(args []string, index *int, name string) (string, bool, er
 	return "", false, nil
 }
 
+func parseBoolOption(args []string, index *int, name string) (bool, error) {
+	arg := args[*index]
+	for _, prefix := range []string{"--" + name, "-" + name} {
+		if arg == prefix {
+			return true, nil
+		}
+		if strings.HasPrefix(arg, prefix+"=") {
+			return true, fmt.Errorf("%s does not accept a value", prefix)
+		}
+	}
+	return false, nil
+}
+
 func printUsage(w io.Writer) {
 	fmt.Fprintln(w, `usage: driftline <command> [options]
 
@@ -174,6 +200,7 @@ commands:
 
 examples:
   driftline init owner/repo
+  driftline init owner/repo --force
   driftline init owner/repo --ref main --target-dir .
   driftline check --target-dir .
   driftline update --force github-workflow.ci
@@ -181,6 +208,7 @@ examples:
 options:
   --target-dir string  target repository directory (default ".")
   --ref string         init-only ref to preserve in .driftline-target.toml
+  --force              init-only adopt existing regular Managed target files
   --force group.file   update-only one-time conflict overwrite
 
 authentication:

@@ -8,12 +8,13 @@ import (
 )
 
 type InitialAdoptionOptions struct {
-	Root         string
-	Source       SourceClient
-	Repository   string
-	Commit       string
-	Manifest     SourceManifest
-	TargetConfig TargetConfig
+	Root                        string
+	Source                      SourceClient
+	Repository                  string
+	Commit                      string
+	Manifest                    SourceManifest
+	TargetConfig                TargetConfig
+	AdoptExistingManagedTargets bool
 }
 
 func AdoptInitialTargetRepository(opts InitialAdoptionOptions) error {
@@ -78,6 +79,12 @@ func (a initialAdoption) adopt() error {
 }
 
 func (a initialAdoption) collectTemplates(root string) ([]initialAdoptionTemplate, error) {
+	type missingTemplate struct {
+		sourcePath string
+		targetPath string
+	}
+
+	missingTemplates := []missingTemplate{}
 	templates := []initialAdoptionTemplate{}
 	for _, entry := range SourceEntries(a.opts.Manifest) {
 		if IsReservedTargetPath(entry.Path) {
@@ -87,37 +94,51 @@ func (a initialAdoption) collectTemplates(root string) ([]initialAdoptionTemplat
 		if err != nil {
 			return nil, err
 		}
-		exists, err := initialAdoptionPathExists(targetPath)
+		info, exists, err := initialAdoptionPathInfo(targetPath)
 		if err != nil {
 			return nil, err
 		}
 
 		switch entry.Mode {
 		case ModeManaged:
-			if exists {
-				return nil, fmt.Errorf("managed target already exists: %s", entry.Path)
+			if !exists {
+				continue
+			}
+			if !info.Mode().IsRegular() {
+				return nil, fmt.Errorf("managed target is not a regular file: %s", entry.Path)
+			}
+			if !a.opts.AdoptExistingManagedTargets {
+				return nil, fmt.Errorf("managed target already exists: %s (rerun with --force to adopt existing regular files)", entry.Path)
 			}
 		case ModeTemplate:
 			if exists {
 				continue
 			}
-			data, err := a.opts.Source.ReadFile(a.opts.Repository, a.opts.Commit, entry.Path)
-			if err != nil {
-				return nil, fmt.Errorf("source template not found in source repository: %w", err)
-			}
-			templates = append(templates, initialAdoptionTemplate{targetPath: targetPath, sourceBytes: data})
+			missingTemplates = append(missingTemplates, missingTemplate{sourcePath: entry.Path, targetPath: targetPath})
 		}
+	}
+	for _, template := range missingTemplates {
+		data, err := a.opts.Source.ReadFile(a.opts.Repository, a.opts.Commit, template.sourcePath)
+		if err != nil {
+			return nil, fmt.Errorf("source template not found in source repository: %w", err)
+		}
+		templates = append(templates, initialAdoptionTemplate{targetPath: template.targetPath, sourceBytes: data})
 	}
 	return templates, nil
 }
 
-func initialAdoptionPathExists(path string) (bool, error) {
-	_, err := os.Lstat(path)
+func initialAdoptionPathInfo(path string) (os.FileInfo, bool, error) {
+	info, err := os.Lstat(path)
 	if err == nil {
-		return true, nil
+		return info, true, nil
 	}
 	if errors.Is(err, os.ErrNotExist) {
-		return false, nil
+		return nil, false, nil
 	}
-	return false, err
+	return nil, false, err
+}
+
+func initialAdoptionPathExists(path string) (bool, error) {
+	_, exists, err := initialAdoptionPathInfo(path)
+	return exists, err
 }

@@ -54,9 +54,9 @@ Source config rules:
 - Each file entry has `path` and `mode`.
 - `mode` is `managed` or `template`.
 
-## Target Config
+## Target Manifest
 
-Create a Target Config from a GitHub Source Repository:
+Create a Target manifest from a GitHub Source Repository:
 
 ```sh
 driftline init y-writings/source-repo
@@ -75,9 +75,9 @@ ref = "main"
 ci = ".github/workflows/project-ci.yaml"
 ```
 
-Target config rules:
+Target manifest rules:
 
-- Target config is parsed as TOML 1.1.
+- Target manifest is parsed as TOML 1.1.
 - `version = 2` is required.
 - `[source]` contains `repository` and `ref`.
 - `[files.<group>]` contains managed files only.
@@ -90,9 +90,17 @@ Use `--ref` with `init` to preserve a branch, tag, or commit-ish by name:
 driftline init y-writings/source-repo --ref main
 ```
 
+Use `--force` with `init` to adopt existing regular files at Managed file target paths into the Target manifest:
+
+```sh
+driftline init y-writings/source-repo --force
+```
+
+`init --force` does not overwrite file content. It records those paths in the Target manifest; later `check` reports drift and `update` synchronizes the now-managed files if their content differs from the Source Repository.
+
 ## File Modes
 
-Managed files stay synchronized with the source. `driftline update` adds missing managed entries to `.driftline-target.toml`, updates changed files, removes entries that are no longer managed, and deletes files that were removed from the managed source set.
+Managed files stay synchronized with the source. `driftline update` adds missing managed entries to the Target manifest, updates changed files, removes entries that are no longer managed, and deletes target files only when their Managed file entry is removed from the Source Config. If a file changes from Managed to Template, `update` removes the Target manifest entry and leaves the target file untouched.
 
 Template files are initial placement aids. `driftline init` writes a template file only when the target path is missing. Later updates do not record, update, or delete template files.
 
@@ -106,13 +114,13 @@ driftline update
 
 Use `--target-dir` to operate on another Target Repository path.
 
-If a newly managed file would overwrite an existing target-owned file, driftline reports a conflict and does not write files or config. To overwrite one file once, pass its file key:
+If a newly managed file would overwrite an existing target-owned file, driftline reports a conflict and does not write files or the Target manifest. To overwrite one file once, pass its file key:
 
 ```sh
 driftline update --force github-workflow.ci
 ```
 
-Force is not persisted in `.driftline-target.toml`.
+Force is not persisted in the Target manifest.
 
 ## GitHub Authentication
 
