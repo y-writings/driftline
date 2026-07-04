@@ -107,14 +107,41 @@ func TestAdoptInitialTargetRepositoryRejectsExistingTargetConfigBeforeWrites(t *
 
 func TestAdoptInitialTargetRepositoryRejectsExistingManagedTarget(t *testing.T) {
 	for _, tt := range []struct {
-		name  string
-		setup func(t *testing.T, root string)
+		name              string
+		setup             func(t *testing.T, root string)
+		wantError         string
+		wantForceGuidance bool
 	}{
 		{
 			name: "regular file",
 			setup: func(t *testing.T, root string) {
 				writeInitialAdoptionTestFile(t, root, ".github/workflows/ci.yaml", "target-owned\n")
 			},
+			wantError:         "managed target already exists",
+			wantForceGuidance: true,
+		},
+		{
+			name: "directory",
+			setup: func(t *testing.T, root string) {
+				if err := os.MkdirAll(filepath.Join(root, ".github/workflows/ci.yaml"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			},
+			wantError: "managed target is not a regular file",
+		},
+		{
+			name: "symlink to regular file",
+			setup: func(t *testing.T, root string) {
+				writeInitialAdoptionTestFile(t, root, "real-ci.yaml", "real\n")
+				path := filepath.Join(root, ".github/workflows/ci.yaml")
+				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(filepath.Join(root, "real-ci.yaml"), path); err != nil {
+					t.Fatal(err)
+				}
+			},
+			wantError: "managed target is not a regular file",
 		},
 		{
 			name: "broken symlink",
@@ -128,6 +155,7 @@ func TestAdoptInitialTargetRepositoryRejectsExistingManagedTarget(t *testing.T) 
 					t.Fatal(err)
 				}
 			},
+			wantError: "managed target is not a regular file",
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -145,8 +173,15 @@ func TestAdoptInitialTargetRepositoryRejectsExistingManagedTarget(t *testing.T) 
 				Manifest:     initialAdoptionManifest(),
 				TargetConfig: initialAdoptionTargetConfig(),
 			})
-			if err == nil || err.Error() != "managed target already exists: .github/workflows/ci.yaml" {
-				t.Fatalf("expected managed target error, got %v", err)
+			if err == nil || !strings.Contains(err.Error(), tt.wantError) {
+				t.Fatalf("expected managed target error containing %q, got %v", tt.wantError, err)
+			}
+			hasForceGuidance := strings.Contains(err.Error(), "rerun with --force")
+			if tt.wantForceGuidance && !hasForceGuidance {
+				t.Fatalf("expected managed target guidance error, got %v", err)
+			}
+			if !tt.wantForceGuidance && hasForceGuidance {
+				t.Fatalf("non-regular managed target must not suggest force adoption, got %v", err)
 			}
 			if initialAdoptionTestPathExists(t, root, TargetConfigPath) {
 				t.Fatal("target manifest must not be written after managed target conflict")
@@ -158,6 +193,238 @@ func TestAdoptInitialTargetRepositoryRejectsExistingManagedTarget(t *testing.T) 
 				t.Fatalf("source files must not be read after managed target conflict: %#v", source.reads)
 			}
 		})
+	}
+}
+
+func TestAdoptInitialTargetRepositoryPreflightsAllManagedTargetsBeforeReadingTemplateSources(t *testing.T) {
+	root := t.TempDir()
+	writeInitialAdoptionTestFile(t, root, ".github/workflows/ci.yaml", "target-owned\n")
+	source := &fakeInitialAdoptionSource{}
+
+	err := AdoptInitialTargetRepository(InitialAdoptionOptions{
+		Root:       root,
+		Source:     source,
+		Repository: "y-writings/source-repo",
+		Commit:     "abc123",
+		Manifest: SourceManifest{Version: 2, Files: map[string]map[string]SourceManifestFile{
+			"aaa-template": {"missing": {Path: "templates/missing.txt", Mode: ModeTemplate}},
+			"zzz-managed":  {"ci": {Path: ".github/workflows/ci.yaml", Mode: ModeManaged}},
+		}},
+		TargetConfig: initialAdoptionTargetConfig(),
+	})
+	if err == nil || err.Error() != "managed target already exists: .github/workflows/ci.yaml (rerun with --force to adopt existing regular files)" {
+		t.Fatalf("expected managed target guidance error, got %v", err)
+	}
+	if len(source.reads) != 0 {
+		t.Fatalf("source files must not be read before all local preflight passes: %#v", source.reads)
+	}
+	if initialAdoptionTestPathExists(t, root, TargetConfigPath) {
+		t.Fatal("target manifest must not be written after managed target conflict")
+	}
+	if initialAdoptionTestPathExists(t, root, "templates/missing.txt") {
+		t.Fatal("template files must not be written after managed target conflict")
+	}
+}
+
+func TestAdoptInitialTargetRepositoryForceAdoptsExistingManagedRegularFile(t *testing.T) {
+	root := t.TempDir()
+	writeInitialAdoptionTestFile(t, root, ".github/workflows/ci.yaml", "target-owned\n")
+	writeInitialAdoptionTestFile(t, root, "templates/existing.txt", "target-template\n")
+	source := &fakeInitialAdoptionSource{files: map[string][]byte{
+		"y-writings/source-repo@abc123:templates/missing.txt": []byte("missing template\n"),
+	}}
+
+	err := AdoptInitialTargetRepository(InitialAdoptionOptions{
+		Root:                        root,
+		Source:                      source,
+		Repository:                  "y-writings/source-repo",
+		Commit:                      "abc123",
+		Manifest:                    initialAdoptionManifest(),
+		TargetConfig:                initialAdoptionTargetConfig(),
+		AdoptExistingManagedTargets: true,
+	})
+	if err != nil {
+		t.Fatalf("initial adoption failed: %v", err)
+	}
+	if got := readInitialAdoptionTestFile(t, root, ".github/workflows/ci.yaml"); got != "target-owned\n" {
+		t.Fatalf("force adoption must not overwrite managed target, got %q", got)
+	}
+	if got := readInitialAdoptionTestFile(t, root, "templates/missing.txt"); got != "missing template\n" {
+		t.Fatalf("missing template content mismatch: %q", got)
+	}
+	if got := readInitialAdoptionTestFile(t, root, "templates/existing.txt"); got != "target-template\n" {
+		t.Fatalf("existing template should be skipped, got %q", got)
+	}
+	config := readInitialAdoptionTestFile(t, root, TargetConfigPath)
+	if !strings.Contains(config, `[files.github-workflow]`) || !strings.Contains(config, `ci = ".github/workflows/ci.yaml"`) {
+		t.Fatalf("target config should record adopted managed target:\n%s", config)
+	}
+	if got, want := source.reads, []string{"y-writings/source-repo@abc123:templates/missing.txt"}; strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("force adoption must not read managed source bytes: got %#v want %#v", got, want)
+	}
+}
+
+func TestAdoptInitialTargetRepositoryForceRejectsNonRegularManagedTargets(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		setup func(t *testing.T, root string)
+	}{
+		{
+			name: "directory",
+			setup: func(t *testing.T, root string) {
+				if err := os.MkdirAll(filepath.Join(root, ".github/workflows/ci.yaml"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "symlink to regular file",
+			setup: func(t *testing.T, root string) {
+				writeInitialAdoptionTestFile(t, root, "real-ci.yaml", "real\n")
+				path := filepath.Join(root, ".github/workflows/ci.yaml")
+				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(filepath.Join(root, "real-ci.yaml"), path); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "broken symlink",
+			setup: func(t *testing.T, root string) {
+				path := filepath.Join(root, ".github/workflows/ci.yaml")
+				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink("missing-target", path); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "symlink ancestor",
+			setup: func(t *testing.T, root string) {
+				outside := t.TempDir()
+				if err := os.MkdirAll(filepath.Join(outside, "workflows"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(outside, "workflows/ci.yaml"), []byte("outside\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(outside, filepath.Join(root, ".github")); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "parent path is file",
+			setup: func(t *testing.T, root string) {
+				writeInitialAdoptionTestFile(t, root, ".github", "not a directory\n")
+			},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			tt.setup(t, root)
+			source := &fakeInitialAdoptionSource{files: map[string][]byte{
+				"y-writings/source-repo@abc123:templates/missing.txt": []byte("missing template\n"),
+			}}
+
+			err := AdoptInitialTargetRepository(InitialAdoptionOptions{
+				Root:                        root,
+				Source:                      source,
+				Repository:                  "y-writings/source-repo",
+				Commit:                      "abc123",
+				Manifest:                    initialAdoptionManifest(),
+				TargetConfig:                initialAdoptionTargetConfig(),
+				AdoptExistingManagedTargets: true,
+			})
+			if err == nil {
+				t.Fatal("expected non-regular managed target to fail")
+			}
+			if initialAdoptionTestPathExists(t, root, TargetConfigPath) {
+				t.Fatal("target manifest must not be written after non-regular managed target error")
+			}
+			if initialAdoptionTestPathExists(t, root, "templates/missing.txt") {
+				t.Fatal("template files must not be written after non-regular managed target error")
+			}
+			if len(source.reads) != 0 {
+				t.Fatalf("source files must not be read after non-regular managed target error: %#v", source.reads)
+			}
+		})
+	}
+}
+
+func TestAdoptInitialTargetRepositorySkipsExistingTemplateThroughSymlinkAncestor(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(outside, "workflows"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(outside, "workflows/release.yaml"), []byte("target-owned\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, ".github")); err != nil {
+		t.Fatal(err)
+	}
+	source := &fakeInitialAdoptionSource{}
+
+	err := AdoptInitialTargetRepository(InitialAdoptionOptions{
+		Root:       root,
+		Source:     source,
+		Repository: "y-writings/source-repo",
+		Commit:     "abc123",
+		Manifest: SourceManifest{Version: 2, Files: map[string]map[string]SourceManifestFile{
+			"templates": {"release": {Path: ".github/workflows/release.yaml", Mode: ModeTemplate}},
+		}},
+		TargetConfig: initialAdoptionNoFilesTargetConfig(),
+	})
+	if err != nil {
+		t.Fatalf("existing template through symlink ancestor should be skipped: %v", err)
+	}
+	if len(source.reads) != 0 {
+		t.Fatalf("existing template should not read source bytes: %#v", source.reads)
+	}
+	if got := readInitialAdoptionTestFile(t, outside, "workflows/release.yaml"); got != "target-owned\n" {
+		t.Fatalf("existing template should remain untouched, got %q", got)
+	}
+	if !initialAdoptionTestPathExists(t, root, TargetConfigPath) {
+		t.Fatal("target manifest should be written after skipping existing template")
+	}
+}
+
+func TestAdoptInitialTargetRepositoryRejectsMissingTemplateThroughSymlinkAncestorBeforeSourceRead(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(outside, "workflows"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, ".github")); err != nil {
+		t.Fatal(err)
+	}
+	source := &fakeInitialAdoptionSource{files: map[string][]byte{
+		"y-writings/source-repo@abc123:.github/workflows/release.yaml": []byte("source\n"),
+	}}
+
+	err := AdoptInitialTargetRepository(InitialAdoptionOptions{
+		Root:       root,
+		Source:     source,
+		Repository: "y-writings/source-repo",
+		Commit:     "abc123",
+		Manifest: SourceManifest{Version: 2, Files: map[string]map[string]SourceManifestFile{
+			"templates": {"release": {Path: ".github/workflows/release.yaml", Mode: ModeTemplate}},
+		}},
+		TargetConfig: initialAdoptionNoFilesTargetConfig(),
+	})
+	if err == nil || !strings.Contains(err.Error(), "target path contains symlink") {
+		t.Fatalf("expected symlink ancestor error, got %v", err)
+	}
+	if len(source.reads) != 0 {
+		t.Fatalf("missing template should fail before source reads: %#v", source.reads)
+	}
+	if initialAdoptionTestPathExists(t, root, TargetConfigPath) {
+		t.Fatal("target manifest must not be written after symlink ancestor error")
 	}
 }
 

@@ -100,6 +100,49 @@ config = { path = ".mise/config.toml", mode = "template" }
 	}
 }
 
+func TestInitForceAdoptsExistingManagedRegularFile(t *testing.T) {
+	targetDir := t.TempDir()
+	writeFile(t, targetDir, ".github/workflows/ci.yaml", "target-owned\n")
+	writeFile(t, targetDir, ".mise/config.toml", "target-template\n")
+	client := newCommandSourceClient("main", `version = 2
+
+[files.github-workflow]
+ci = { path = ".github/workflows/ci.yaml", mode = "managed" }
+release = { path = ".github/workflows/release.yaml", mode = "template" }
+
+[files.mise]
+config = { path = ".mise/config.toml", mode = "template" }
+`, map[string]string{
+		".github/workflows/release.yaml": "release\n",
+		".mise/config.toml":              "source-template\n",
+	})
+
+	var stdout, stderr bytes.Buffer
+	err := (Runner{Source: client}).Run([]string{"init", "y-writings/source-repo", "--target-dir", targetDir, "--force"}, &stdout, &stderr)
+	if err != nil {
+		t.Fatalf("forced init failed: %v\nstderr: %s", err, stderr.String())
+	}
+	if got := readFile(t, targetDir, ".github/workflows/ci.yaml"); got != "target-owned\n" {
+		t.Fatalf("forced init must not overwrite existing managed target, got %q", got)
+	}
+	if got := readFile(t, targetDir, ".github/workflows/release.yaml"); got != "release\n" {
+		t.Fatalf("expected missing template to be placed, got %q", got)
+	}
+	if got := readFile(t, targetDir, ".mise/config.toml"); got != "target-template\n" {
+		t.Fatalf("existing template should be skipped, got %q", got)
+	}
+	config := readFile(t, targetDir, driftline.TargetConfigPath)
+	if !strings.Contains(config, `[files.github-workflow]`) || !strings.Contains(config, `ci = ".github/workflows/ci.yaml"`) {
+		t.Fatalf("target config should record adopted managed target:\n%s", config)
+	}
+	if strings.Contains(config, "force") || strings.Contains(config, "release") || strings.Contains(config, "mise") {
+		t.Fatalf("target config should not persist force or template entries:\n%s", config)
+	}
+	if !strings.Contains(stdout.String(), "created .driftline-target.toml from y-writings/source-repo@0123456789abcdef0123456789abcdef01234567") {
+		t.Fatalf("unexpected stdout: %q", stdout.String())
+	}
+}
+
 func TestInitRefPreservesInputRef(t *testing.T) {
 	targetDir := t.TempDir()
 	client := newCommandSourceClient("feature/foo", "version = 2\n", nil)
@@ -123,27 +166,56 @@ func TestInitFailsOnExistingTargetConfigBeforeSourceAccess(t *testing.T) {
 	}
 }
 
+func TestInitFailsOnBrokenSymlinkTargetConfigBeforeSourceAccess(t *testing.T) {
+	targetDir := t.TempDir()
+	if err := os.Symlink(filepath.Join(t.TempDir(), "missing-target-config"), filepath.Join(targetDir, driftline.TargetConfigPath)); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	err := (Runner{Source: sourceAccessFailingClient{}}).Run([]string{"init", "y-writings/source-repo", "--target-dir", targetDir}, &stdout, &stderr)
+	if err == nil {
+		t.Fatal("expected target config error before source access")
+	}
+	if strings.Contains(err.Error(), "source should not be accessed") {
+		t.Fatalf("source was accessed before rejecting existing target config: %v", err)
+	}
+	if !strings.Contains(err.Error(), "target config already exists") {
+		t.Fatalf("expected target config error before source access, got %v", err)
+	}
+}
+
 func TestInitFailsBeforeWritingWhenConfigOrManagedTargetExists(t *testing.T) {
-	for name, setup := range map[string]func(string){
-		"target config exists": func(targetDir string) {
-			writeFile(t, targetDir, driftline.TargetConfigPath, "existing\n")
+	for name, tt := range map[string]struct {
+		setup        func(string)
+		wantGuidance bool
+	}{
+		"target config exists": {
+			setup: func(targetDir string) {
+				writeFile(t, targetDir, driftline.TargetConfigPath, "existing\n")
+			},
 		},
-		"managed target exists": func(targetDir string) {
-			writeFile(t, targetDir, ".github/workflows/ci.yaml", "existing\n")
+		"managed target exists": {
+			setup: func(targetDir string) {
+				writeFile(t, targetDir, ".github/workflows/ci.yaml", "existing\n")
+			},
+			wantGuidance: true,
 		},
-		"managed target broken symlink exists": func(targetDir string) {
-			linkPath := filepath.Join(targetDir, ".github/workflows/ci.yaml")
-			if err := os.MkdirAll(filepath.Dir(linkPath), 0o755); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.Symlink(filepath.Join(t.TempDir(), "missing"), linkPath); err != nil {
-				t.Fatal(err)
-			}
+		"managed target broken symlink exists": {
+			setup: func(targetDir string) {
+				linkPath := filepath.Join(targetDir, ".github/workflows/ci.yaml")
+				if err := os.MkdirAll(filepath.Dir(linkPath), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(filepath.Join(t.TempDir(), "missing"), linkPath); err != nil {
+					t.Fatal(err)
+				}
+			},
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			targetDir := t.TempDir()
-			setup(targetDir)
+			tt.setup(targetDir)
 			client := newCommandSourceClient("main", `version = 2
 
 [files.github-workflow]
@@ -154,6 +226,9 @@ release = { path = ".github/workflows/release.yaml", mode = "template" }
 			err := (Runner{Source: client}).Run([]string{"init", "y-writings/source-repo", "--target-dir", targetDir}, &stdout, &stderr)
 			if err == nil {
 				t.Fatal("expected init to fail")
+			}
+			if tt.wantGuidance && !strings.Contains(err.Error(), "rerun with --force") {
+				t.Fatalf("expected force guidance, got %v", err)
 			}
 			if _, err := os.Stat(filepath.Join(targetDir, ".github/workflows/release.yaml")); !errors.Is(err, os.ErrNotExist) {
 				t.Fatalf("init must fail before placing templates, stat err=%v", err)
@@ -210,7 +285,17 @@ func TestHelpOmitsPruneAndPruneCommandIsRemoved(t *testing.T) {
 	if err := runner.Run([]string{"help"}, &stdout, &stderr); err != nil {
 		t.Fatalf("help failed: %v", err)
 	}
-	for _, want := range []string{"driftline init owner/repo", "check", "diff", "update", "GITHUB_TOKEN"} {
+	for _, want := range []string{
+		"driftline init owner/repo",
+		"driftline init owner/repo --force",
+		"driftline update --force github-workflow.ci",
+		"--force              init-only adopt existing regular Managed target files",
+		"--force group.file   update-only one-time conflict overwrite",
+		"check",
+		"diff",
+		"update",
+		"GITHUB_TOKEN",
+	} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Fatalf("help missing %q:\n%s", want, stdout.String())
 		}
@@ -587,12 +672,49 @@ func TestParseOptionsAcceptsStandardFlagFormsAndUpdateForce(t *testing.T) {
 		t.Fatalf("unexpected init options: %#v", initOpts)
 	}
 
+	initForceBefore, err := parseInitOptions([]string{"--force", "y-writings/source-repo"})
+	if err != nil {
+		t.Fatalf("parse init --force before repository failed: %v", err)
+	}
+	if initForceBefore.Repository != "y-writings/source-repo" || !initForceBefore.Force {
+		t.Fatalf("unexpected init --force before repository options: %#v", initForceBefore)
+	}
+
+	initForceAfter, err := parseInitOptions([]string{"y-writings/source-repo", "--force"})
+	if err != nil {
+		t.Fatalf("parse init --force after repository failed: %v", err)
+	}
+	if initForceAfter.Repository != "y-writings/source-repo" || !initForceAfter.Force {
+		t.Fatalf("unexpected init --force after repository options: %#v", initForceAfter)
+	}
+
+	for name, args := range map[string][]string{
+		"force equals": {"y-writings/source-repo", "--force=true"},
+		"force value":  {"y-writings/source-repo", "--force", "github-workflow.ci"},
+	} {
+		t.Run("init rejects "+name, func(t *testing.T) {
+			if _, err := parseInitOptions(args); err == nil {
+				t.Fatalf("expected parse init options to reject %#v", args)
+			}
+		})
+	}
+
 	updateOpts, err := parseUpdateOptions([]string{"--target-dir", "/tmp/target", "--force", "github-workflow.ci"})
 	if err != nil {
 		t.Fatalf("parse update options failed: %v", err)
 	}
 	if updateOpts.TargetDir != "/tmp/target" || updateOpts.ForceKey != "github-workflow.ci" {
 		t.Fatalf("unexpected update options: %#v", updateOpts)
+	}
+	for name, args := range map[string][]string{
+		"force equals empty": {"--force="},
+		"force space empty":  {"--force", ""},
+	} {
+		t.Run("update rejects "+name, func(t *testing.T) {
+			if _, err := parseUpdateOptions(args); err == nil {
+				t.Fatalf("expected parse update options to reject %#v", args)
+			}
+		})
 	}
 	if _, err := parseTargetOptions([]string{"--force", "github-workflow.ci"}); err == nil {
 		t.Fatal("check/diff target options must not accept --force")

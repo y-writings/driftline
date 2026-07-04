@@ -25,7 +25,7 @@ func runInit(source driftline.SourceClient, opts InitOptions, stdout io.Writer) 
 		return fmt.Errorf("target directory must be a directory: %s", opts.TargetDir)
 	}
 	configPath := filepath.Join(opts.TargetDir, driftline.TargetConfigPath)
-	if _, err := os.Stat(configPath); err == nil {
+	if _, err := os.Lstat(configPath); err == nil {
 		return fmt.Errorf("target config already exists: %s", driftline.TargetConfigPath)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
@@ -62,12 +62,13 @@ func runInit(source driftline.SourceClient, opts InitOptions, stdout io.Writer) 
 		return err
 	}
 	if err := driftline.AdoptInitialTargetRepository(driftline.InitialAdoptionOptions{
-		Root:         opts.TargetDir,
-		Source:       source,
-		Repository:   opts.Repository,
-		Commit:       commit,
-		Manifest:     manifest,
-		TargetConfig: config,
+		Root:                        opts.TargetDir,
+		Source:                      source,
+		Repository:                  opts.Repository,
+		Commit:                      commit,
+		Manifest:                    manifest,
+		TargetConfig:                config,
+		AdoptExistingManagedTargets: opts.Force,
 	}); err != nil {
 		return err
 	}
