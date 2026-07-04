@@ -95,9 +95,6 @@ func (a initialAdoption) collectTemplates(root string) ([]initialAdoptionTemplat
 		if err != nil {
 			return nil, err
 		}
-		if err := initialAdoptionRejectSymlinkAncestors(root, targetPath, entry.Path); err != nil {
-			return nil, err
-		}
 		info, exists, err := initialAdoptionPathInfo(targetPath)
 		if err != nil {
 			return nil, err
@@ -105,6 +102,9 @@ func (a initialAdoption) collectTemplates(root string) ([]initialAdoptionTemplat
 
 		switch entry.Mode {
 		case ModeManaged:
+			if err := initialAdoptionRejectSymlinkAncestors(root, targetPath, entry.Path); err != nil {
+				return nil, err
+			}
 			if !exists {
 				continue
 			}
@@ -117,6 +117,9 @@ func (a initialAdoption) collectTemplates(root string) ([]initialAdoptionTemplat
 		case ModeTemplate:
 			if exists {
 				continue
+			}
+			if err := initialAdoptionRejectSymlinkAncestors(root, targetPath, entry.Path); err != nil {
+				return nil, err
 			}
 			missingTemplates = append(missingTemplates, missingTemplate{sourcePath: entry.Path, targetPath: targetPath})
 		}

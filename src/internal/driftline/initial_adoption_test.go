@@ -356,6 +356,78 @@ func TestAdoptInitialTargetRepositoryForceRejectsNonRegularManagedTargets(t *tes
 	}
 }
 
+func TestAdoptInitialTargetRepositorySkipsExistingTemplateThroughSymlinkAncestor(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(outside, "workflows"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(outside, "workflows/release.yaml"), []byte("target-owned\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, ".github")); err != nil {
+		t.Fatal(err)
+	}
+	source := &fakeInitialAdoptionSource{}
+
+	err := AdoptInitialTargetRepository(InitialAdoptionOptions{
+		Root:       root,
+		Source:     source,
+		Repository: "y-writings/source-repo",
+		Commit:     "abc123",
+		Manifest: SourceManifest{Version: 2, Files: map[string]map[string]SourceManifestFile{
+			"templates": {"release": {Path: ".github/workflows/release.yaml", Mode: ModeTemplate}},
+		}},
+		TargetConfig: initialAdoptionNoFilesTargetConfig(),
+	})
+	if err != nil {
+		t.Fatalf("existing template through symlink ancestor should be skipped: %v", err)
+	}
+	if len(source.reads) != 0 {
+		t.Fatalf("existing template should not read source bytes: %#v", source.reads)
+	}
+	if got := readInitialAdoptionTestFile(t, outside, "workflows/release.yaml"); got != "target-owned\n" {
+		t.Fatalf("existing template should remain untouched, got %q", got)
+	}
+	if !initialAdoptionTestPathExists(t, root, TargetConfigPath) {
+		t.Fatal("target manifest should be written after skipping existing template")
+	}
+}
+
+func TestAdoptInitialTargetRepositoryRejectsMissingTemplateThroughSymlinkAncestorBeforeSourceRead(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(outside, "workflows"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, ".github")); err != nil {
+		t.Fatal(err)
+	}
+	source := &fakeInitialAdoptionSource{files: map[string][]byte{
+		"y-writings/source-repo@abc123:.github/workflows/release.yaml": []byte("source\n"),
+	}}
+
+	err := AdoptInitialTargetRepository(InitialAdoptionOptions{
+		Root:       root,
+		Source:     source,
+		Repository: "y-writings/source-repo",
+		Commit:     "abc123",
+		Manifest: SourceManifest{Version: 2, Files: map[string]map[string]SourceManifestFile{
+			"templates": {"release": {Path: ".github/workflows/release.yaml", Mode: ModeTemplate}},
+		}},
+		TargetConfig: initialAdoptionNoFilesTargetConfig(),
+	})
+	if err == nil || !strings.Contains(err.Error(), "target path contains symlink") {
+		t.Fatalf("expected symlink ancestor error, got %v", err)
+	}
+	if len(source.reads) != 0 {
+		t.Fatalf("missing template should fail before source reads: %#v", source.reads)
+	}
+	if initialAdoptionTestPathExists(t, root, TargetConfigPath) {
+		t.Fatal("target manifest must not be written after symlink ancestor error")
+	}
+}
+
 func TestAdoptInitialTargetRepositoryRejectsReservedTargetPath(t *testing.T) {
 	for _, tt := range []struct {
 		name     string
