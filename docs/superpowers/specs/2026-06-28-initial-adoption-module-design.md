@@ -154,4 +154,4 @@ This is an internal architecture change for a pre-release CLI. No compatibility 
 
 ## Open Questions
 
-None. The design intentionally keeps this change narrow and leaves Contract read-path deepening for later work.
+None. The design intentionally keeps this change narrow and leaves Source Repository read-path deepening for later work.
