@@ -107,7 +107,7 @@ ci = ".github/workflows/ci.yaml"
 	}
 }
 
-func TestBuildPlanManagedToTemplateRemovesConfigAndLeavesTargetFile(t *testing.T) {
+func TestBuildPlanManagedToTemplateRemovesSyncManifestEntryAndLeavesTargetFile(t *testing.T) {
 	targetDir := t.TempDir()
 	writePlanFile(t, targetDir, TargetConfigPath, syncManifestTOML(`[files.github-workflow]
 release = ".github/workflows/release.yaml"
