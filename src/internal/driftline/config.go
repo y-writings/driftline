@@ -273,7 +273,7 @@ func IsReservedMetadataPath(name string) bool {
 
 func validateUnreservedMetadataPath(name string, label string) error {
 	if IsReservedMetadataPath(name) {
-		return fmt.Errorf("%s uses reserved driftline metadata path: %s", label, name)
+		return fmt.Errorf("reserved driftline metadata path: %s: %s", name, label)
 	}
 	return nil
 }

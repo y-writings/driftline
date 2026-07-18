@@ -375,27 +375,27 @@ release = { path = ".github/workflows/release.yaml", mode = "template" }
 
 func TestInitRejectsSourceFilesTargetingReservedPaths(t *testing.T) {
 	for name, contract := range map[string]string{
-		"managed Sync manifest path": `version = 2
+		"managed metadata path": `version = 2
 
 [files.driftline]
-target = { path = ".driftline/sync.toml", mode = "managed" }
+target = { path = ".driftline/example.toml", mode = "managed" }
 `,
-		"template Sync manifest path": `version = 2
+		"template metadata path": `version = 2
 
 [files.driftline]
-target = { path = ".driftline/sync.toml", mode = "template" }
+target = { path = ".driftline/example.toml", mode = "template" }
 `,
 	} {
 		t.Run(name, func(t *testing.T) {
 			targetDir := t.TempDir()
 			client := newCommandSourceClient("main", contract, map[string]string{
-				driftline.SyncManifestPath: "template bytes\n",
+				".driftline/example.toml": "template bytes\n",
 			})
 			var stdout, stderr bytes.Buffer
 
 			err := (Runner{Source: client}).Run([]string{"init", "y-writings/source-repo", "--target-dir", targetDir}, &stdout, &stderr)
 
-			if err == nil || !strings.Contains(err.Error(), "reserved driftline metadata path") {
+			if err == nil || !strings.HasPrefix(err.Error(), "reserved driftline metadata path: .driftline/example.toml") {
 				t.Fatalf("expected reserved target path error, got %v", err)
 			}
 			assertFileMissing(t, targetDir, driftline.SyncManifestPath)
@@ -403,33 +403,43 @@ target = { path = ".driftline/sync.toml", mode = "template" }
 	}
 }
 
-func TestHelpOmitsPruneAndPruneCommandIsRemoved(t *testing.T) {
+func TestHelpReportsCurrentCommandsAndArtifacts(t *testing.T) {
 	runner := Runner{Source: commandFakeSourceClient{}}
 	var stdout, stderr bytes.Buffer
 	if err := runner.Run([]string{"help"}, &stdout, &stderr); err != nil {
 		t.Fatalf("help failed: %v", err)
 	}
-	for _, want := range []string{
-		"driftline init owner/repo",
-		"driftline init owner/repo --force",
-		"driftline update --force github-workflow.ci",
-		"--force              init-only adopt existing regular Managed target files",
-		"--force group.file   update-only one-time conflict overwrite",
-		"check",
-		"diff",
-		"update",
-		".driftline/sync.toml",
-		"GITHUB_TOKEN",
-	} {
-		if !strings.Contains(stdout.String(), want) {
-			t.Fatalf("help missing %q:\n%s", want, stdout.String())
+	wantHelp := `usage: driftline <command> [options]
+
+commands:
+  init owner/repo  create .driftline/sync.toml from a GitHub Source Repository
+  check            check whether target files match the Source Repository
+  diff             show diffs for files that would be added or updated
+  update           sync managed files and refresh .driftline/sync.toml
+
+examples:
+  driftline init owner/repo
+  driftline init owner/repo --force
+  driftline init owner/repo --ref main --target-dir .
+  driftline check --target-dir .
+  driftline update --force github-workflow.ci
+
+options:
+  --target-dir string  target repository directory (default ".")
+  --ref string         init-only ref to preserve in .driftline/sync.toml
+  --force              init-only adopt existing regular Managed target files
+  --force group.file   update-only one-time conflict overwrite
+
+authentication:
+  set GITHUB_TOKEN for private repositories or higher rate limits
+`
+	if stdout.String() != wantHelp {
+		t.Fatalf("unexpected help output:\n%s", stdout.String())
+	}
+	for _, stale := range []string{".driftline-source.toml", ".driftline-target.toml", ".yaml", ".yml", "driftline-lock", "path_overrides", "if_not_exists", "prune", "\n  sync "} {
+		if strings.Contains(stdout.String(), stale) {
+			t.Fatalf("help still mentions removed surface %q:\n%s", stale, stdout.String())
 		}
-	}
-	if strings.Contains(stdout.String(), "prune") || strings.Contains(stdout.String(), "driftline-lock") || strings.Contains(stdout.String(), ".yaml") {
-		t.Fatalf("help still mentions removed surface:\n%s", stdout.String())
-	}
-	if strings.Contains(stdout.String(), ".driftline-target.toml") || strings.Contains(stdout.String(), ".driftline-source.toml") {
-		t.Fatalf("help still mentions old root metadata paths:\n%s", stdout.String())
 	}
 
 	stdout.Reset()
@@ -441,6 +451,12 @@ func TestHelpOmitsPruneAndPruneCommandIsRemoved(t *testing.T) {
 
 func TestCheckReportsMissingManagedEntryAndUpdateWritesCanonicalSyncManifest(t *testing.T) {
 	targetDir := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	err := (Runner{Source: sourceAccessFailingClient{}}).Run([]string{"check", "--target-dir", targetDir}, &stdout, &stderr)
+	if err == nil || !strings.Contains(err.Error(), "Sync manifest not found: .driftline/sync.toml") {
+		t.Fatalf("expected canonical missing Sync manifest error, got %v", err)
+	}
+
 	writeFile(t, targetDir, driftline.SyncManifestPath, syncManifestTOML(""))
 	client := newCommandSourceClient("main", `version = 2
 
@@ -449,25 +465,23 @@ ci = { path = ".github/workflows/ci.yaml", mode = "managed" }
 `, map[string]string{".github/workflows/ci.yaml": "ci\n"})
 	runner := Runner{Source: client}
 
-	var stdout, stderr bytes.Buffer
-	err := runner.Run([]string{"check", "--target-dir", targetDir}, &stdout, &stderr)
+	stdout.Reset()
+	stderr.Reset()
+	err = runner.Run([]string{"check", "--target-dir", targetDir}, &stdout, &stderr)
 	if err == nil {
 		t.Fatal("expected check drift")
 	}
-	for _, want := range []string{"sync-manifest-add github-workflow.ci: add Sync manifest entry", "add github-workflow.ci: target file is missing"} {
-		if !strings.Contains(stdout.String(), want) {
-			t.Fatalf("check output missing %q: %q", want, stdout.String())
-		}
+	wantChanges := "add github-workflow.ci: target file is missing\nsync-manifest-add github-workflow.ci: add Sync manifest entry\n"
+	if stdout.String() != wantChanges {
+		t.Fatalf("unexpected check output: %q", stdout.String())
 	}
 
 	stdout.Reset()
 	if err := runner.Run([]string{"update", "--target-dir", targetDir}, &stdout, &stderr); err != nil {
 		t.Fatalf("update failed: %v", err)
 	}
-	for _, want := range []string{"sync-manifest-add github-workflow.ci: add Sync manifest entry", "add github-workflow.ci: target file is missing"} {
-		if !strings.Contains(stdout.String(), want) {
-			t.Fatalf("update output missing %q: %q", want, stdout.String())
-		}
+	if stdout.String() != wantChanges {
+		t.Fatalf("unexpected update output: %q", stdout.String())
 	}
 	if got := readFile(t, targetDir, ".github/workflows/ci.yaml"); got != "ci\n" {
 		t.Fatalf("unexpected copied workflow: %q", got)
@@ -512,6 +526,10 @@ ci = ".github/workflows/ci.yaml"
 	var stdout, stderr bytes.Buffer
 	if err := (Runner{Source: client}).Run([]string{"update", "--target-dir", targetDir}, &stdout, &stderr); err != nil {
 		t.Fatalf("update failed: %v", err)
+	}
+	wantChanges := "remove github-workflow.ci: managed file removed from Contract\nsync-manifest-remove github-workflow.ci: remove Sync manifest entry\n"
+	if stdout.String() != wantChanges {
+		t.Fatalf("unexpected update output: %q", stdout.String())
 	}
 	assertFileMissing(t, targetDir, ".github/workflows/ci.yaml")
 	manifest := readFile(t, targetDir, driftline.SyncManifestPath)
@@ -668,10 +686,17 @@ ci = { path = ".github/workflows/ci.yaml", mode = "managed" }
 	if err == nil {
 		t.Fatal("expected conflict")
 	}
-	for _, want := range []string{"conflict github-workflow.ci: target already exists", "target: .github/workflows/ci.yaml", "set another target path in .driftline/sync.toml", "rerun with --force github-workflow.ci"} {
-		if !strings.Contains(stdout.String(), want) {
-			t.Fatalf("conflict output missing %q:\n%s", want, stdout.String())
-		}
+	wantConflict := `conflict github-workflow.ci: target already exists
+  target: .github/workflows/ci.yaml
+  source mode: managed
+
+Choose one:
+  1. set another target path in .driftline/sync.toml
+  2. move the existing target file
+  3. rerun with --force github-workflow.ci to overwrite
+`
+	if stdout.String() != wantConflict {
+		t.Fatalf("unexpected conflict output:\n%s", stdout.String())
 	}
 	if got := readFile(t, targetDir, ".github/workflows/ci.yaml"); got != "target-owned\n" {
 		t.Fatalf("conflict must not overwrite target, got %q", got)
@@ -772,10 +797,9 @@ ci = ".github/workflows/ci.yaml"
 	if err == nil {
 		t.Fatal("expected diff drift")
 	}
-	for _, want := range []string{"remove github-workflow.ci: managed file removed from Contract", "sync-manifest-remove github-workflow.ci: remove Sync manifest entry"} {
-		if !strings.Contains(stdout.String(), want) {
-			t.Fatalf("diff output missing %q:\n%s", want, stdout.String())
-		}
+	wantChanges := "remove github-workflow.ci: managed file removed from Contract\nsync-manifest-remove github-workflow.ci: remove Sync manifest entry\n"
+	if stdout.String() != wantChanges {
+		t.Fatalf("unexpected diff output: %q", stdout.String())
 	}
 }
 
