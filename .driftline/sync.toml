@@ -7,8 +7,11 @@ ref = "main"
 [files.LICENSE]
 license = "LICENSE"
 
-[files.commitlint]
-config = ".commitlintrc.yaml"
+[files.configs]
+commitlint = ".commitlintrc.yaml"
+lefthook = "lefthook.yaml"
+pinact = ".pinact.yaml"
+tombi = "tombi.toml"
 
 [files.entire]
 gitignore = ".entire/.gitignore"
@@ -16,20 +19,12 @@ opencode-plugin = ".opencode/plugins/entire.ts"
 settings = ".entire/settings.json"
 
 [files.github]
-pull-request-template = ".github/pull_request_template.md"
-
-[files.github-workflows]
 entire-checkpoint-collection = ".github/workflows/00-entire-checkpoint-collection.yaml"
+pull-request-template = ".github/pull_request_template.md"
 security-scan = ".github/workflows/00-security-scan.yaml"
 semantic-pr-check = ".github/workflows/00-semantic-pr-check.yaml"
 weekly-merged-prs-report = ".github/workflows/00-weekly-merged-prs-report.yaml"
 
-[files.lefthook]
-config = "lefthook.yaml"
-
 [files.mise]
-baseline = ".mise/config.baseline.toml"
+baseline-config = ".mise/config.baseline.toml"
 miserc = ".miserc.toml"
-
-[files.pinact]
-config = ".pinact.yaml"
