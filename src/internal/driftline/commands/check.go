@@ -47,5 +47,5 @@ func printChange(w io.Writer, change driftline.Change) {
 		fmt.Fprintf(w, "  3. rerun with --force %s to overwrite\n", change.ID)
 		return
 	}
-	fmt.Fprintln(w, "  2. remove or change the conflicting managed entry")
+	fmt.Fprintln(w, "  2. remove or change the conflicting filesystem path or managed entry")
 }

@@ -16,6 +16,7 @@ type commandFakeSourceClient struct {
 	defaultCommit string
 	refs          map[string]string
 	files         map[string][]byte
+	readErr       error
 }
 
 type sourceAccessFailingClient struct{}
@@ -45,6 +46,9 @@ func (f commandFakeSourceClient) ResolveRef(repository string, ref string) (stri
 }
 
 func (f commandFakeSourceClient) ReadFile(repository string, commit string, path string) ([]byte, error) {
+	if f.readErr != nil {
+		return nil, f.readErr
+	}
 	data, ok := f.files[repository+"@"+commit+":"+path]
 	if !ok {
 		return nil, os.ErrNotExist
@@ -122,6 +126,25 @@ func TestInitDoesNotReadOldRootContract(t *testing.T) {
 	}
 	assertFileMissing(t, targetDir, driftline.SyncManifestPath)
 	assertFileMissing(t, targetDir, ".driftline-target.toml")
+}
+
+func TestInitReportsContractReadFailure(t *testing.T) {
+	targetDir := t.TempDir()
+	providerErr := errors.New("provider unavailable")
+	client := commandFakeSourceClient{
+		defaultRef:    "main",
+		defaultCommit: "0123456789abcdef0123456789abcdef01234567",
+		readErr:       providerErr,
+	}
+
+	var stdout, stderr bytes.Buffer
+	err := (Runner{Source: client}).Run([]string{"init", "y-writings/source-repo", "--target-dir", targetDir}, &stdout, &stderr)
+	if err == nil || err.Error() != "read Contract .driftline/contract.toml: provider unavailable" {
+		t.Fatalf("expected canonical Contract read error, got %v", err)
+	}
+	if !errors.Is(err, providerErr) {
+		t.Fatalf("Contract read error should preserve provider cause: %v", err)
+	}
 }
 
 func TestInitForceAdoptsExistingManagedRegularFile(t *testing.T) {
@@ -436,7 +459,7 @@ authentication:
 	if stdout.String() != wantHelp {
 		t.Fatalf("unexpected help output:\n%s", stdout.String())
 	}
-	for _, stale := range []string{".driftline-source.toml", ".driftline-target.toml", ".yaml", ".yml", "driftline-lock", "path_overrides", "if_not_exists", "prune", "\n  sync "} {
+	for _, stale := range []string{".driftline-source.toml", ".driftline-target.toml", "driftline-lock", "path_overrides", "if_not_exists", "prune", "\n  sync "} {
 		if strings.Contains(stdout.String(), stale) {
 			t.Fatalf("help still mentions removed surface %q:\n%s", stale, stdout.String())
 		}
@@ -741,10 +764,16 @@ ci = { path = ".github/workflows/ci.yaml", mode = "managed" }
 	if err == nil {
 		t.Fatal("expected broken symlink target conflict")
 	}
-	for _, want := range []string{"conflict github-workflow.ci: target already exists", "target: .github/workflows/ci.yaml"} {
-		if !strings.Contains(stdout.String(), want) {
-			t.Fatalf("conflict output missing %q:\n%s", want, stdout.String())
-		}
+	wantConflict := `conflict github-workflow.ci: target already exists
+  target: .github/workflows/ci.yaml
+  source mode: managed
+
+Choose one:
+  1. set another target path in .driftline/sync.toml
+  2. remove or change the conflicting filesystem path or managed entry
+`
+	if stdout.String() != wantConflict {
+		t.Fatalf("unexpected broken symlink conflict output:\n%s", stdout.String())
 	}
 	info, err := os.Lstat(linkPath)
 	if err != nil || info.Mode()&os.ModeSymlink == 0 {

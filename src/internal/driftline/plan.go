@@ -57,7 +57,10 @@ func BuildPlan(opts PlanOptions) (Plan, error) {
 	}
 	contractBytes, err := opts.Source.ReadFile(syncManifest.Source.Repository, commit, ContractPath)
 	if err != nil {
-		return Plan{}, fmt.Errorf("Contract not found: %s: %w", ContractPath, err)
+		if errors.Is(err, os.ErrNotExist) {
+			return Plan{}, fmt.Errorf("Contract not found: %s: %w", ContractPath, err)
+		}
+		return Plan{}, fmt.Errorf("read Contract %s: %w", ContractPath, err)
 	}
 	contract, err := LoadContractBytes(contractBytes)
 	if err != nil {

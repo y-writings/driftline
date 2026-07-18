@@ -1,6 +1,7 @@
 package driftline
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,7 @@ type fakeSourceClient struct {
 	defaultCommit string
 	refs          map[string]string
 	files         map[string][]byte
+	readErr       error
 }
 
 type planSourceAccessFailingClient struct{}
@@ -41,6 +43,9 @@ func (f fakeSourceClient) ResolveRef(repository string, ref string) (string, err
 }
 
 func (f fakeSourceClient) ReadFile(repository string, commit string, path string) ([]byte, error) {
+	if f.readErr != nil {
+		return nil, f.readErr
+	}
 	data, ok := f.files[repository+"@"+commit+":"+path]
 	if !ok {
 		return nil, os.ErrNotExist
@@ -79,6 +84,43 @@ func TestBuildPlanDoesNotReadOldRootSyncManifest(t *testing.T) {
 	_, err := BuildPlan(PlanOptions{TargetDir: targetDir, Source: planSourceAccessFailingClient{}})
 	if err == nil || !strings.Contains(err.Error(), "Sync manifest not found: .driftline/sync.toml") {
 		t.Fatalf("expected canonical Sync manifest error before source access, got %v", err)
+	}
+}
+
+func TestBuildPlanClassifiesContractReadErrors(t *testing.T) {
+	providerErr := errors.New("provider unavailable")
+	for _, tt := range []struct {
+		name       string
+		readErr    error
+		wantPrefix string
+	}{
+		{
+			name:       "not found",
+			readErr:    os.ErrNotExist,
+			wantPrefix: "Contract not found: .driftline/contract.toml: ",
+		},
+		{
+			name:       "provider failure",
+			readErr:    providerErr,
+			wantPrefix: "read Contract .driftline/contract.toml: ",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			targetDir := t.TempDir()
+			writePlanFile(t, targetDir, SyncManifestPath, syncManifestTOML(""))
+			client := fakeSourceClient{
+				refs:    map[string]string{"y-writings/source-repo@main": "0123456789abcdef0123456789abcdef01234567"},
+				readErr: tt.readErr,
+			}
+
+			_, err := BuildPlan(PlanOptions{TargetDir: targetDir, Source: client})
+			if err == nil || !strings.HasPrefix(err.Error(), tt.wantPrefix) {
+				t.Fatalf("expected %q error, got %v", tt.wantPrefix, err)
+			}
+			if !errors.Is(err, tt.readErr) {
+				t.Fatalf("Contract read error should preserve cause %v: %v", tt.readErr, err)
+			}
+		})
 	}
 }
 

@@ -96,6 +96,9 @@ func (c *GitHubClient) ReadFile(repository string, commit string, path string) (
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
 		io.Copy(io.Discard, res.Body)
+		if res.StatusCode == http.StatusNotFound {
+			return nil, fmt.Errorf("github read file: %w", os.ErrNotExist)
+		}
 		return nil, c.httpError(res, "github read file")
 	}
 	return io.ReadAll(res.Body)

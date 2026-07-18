@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -46,7 +47,10 @@ func runInit(source driftline.SourceClient, opts InitOptions, stdout io.Writer) 
 	}
 	contractBytes, err := source.ReadFile(opts.Repository, commit, driftline.ContractPath)
 	if err != nil {
-		return fmt.Errorf("Contract not found: %s: %w", driftline.ContractPath, err)
+		if errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("Contract not found: %s: %w", driftline.ContractPath, err)
+		}
+		return fmt.Errorf("read Contract %s: %w", driftline.ContractPath, err)
 	}
 	contract, err := driftline.LoadContractBytes(contractBytes)
 	if err != nil {

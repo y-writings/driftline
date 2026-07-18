@@ -1,6 +1,7 @@
 package driftline
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -89,6 +90,34 @@ func TestGitHubClientReadFileUsesContentsAPIAtCommit(t *testing.T) {
 	}
 	if string(data) != "file bytes\n" {
 		t.Fatalf("unexpected data: %q", data)
+	}
+}
+
+func TestGitHubClientReadFileClassifiesOnlyNotFoundStatus(t *testing.T) {
+	for _, tt := range []struct {
+		name         string
+		status       int
+		wantNotFound bool
+	}{
+		{name: "not found", status: http.StatusNotFound, wantNotFound: true},
+		{name: "server error", status: http.StatusInternalServerError, wantNotFound: false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tt.status)
+			}))
+			t.Cleanup(server.Close)
+
+			client := NewGitHubClientFromEnv()
+			client.apiBase = server.URL
+			_, err := client.ReadFile("y-writings/source-repo", "0123456789abcdef0123456789abcdef01234567", ContractPath)
+			if err == nil {
+				t.Fatal("expected read error")
+			}
+			if got := errors.Is(err, os.ErrNotExist); got != tt.wantNotFound {
+				t.Fatalf("errors.Is(os.ErrNotExist) = %v, want %v: %v", got, tt.wantNotFound, err)
+			}
+		})
 	}
 }
 
