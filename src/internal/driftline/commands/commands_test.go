@@ -95,8 +95,8 @@ config = { path = ".mise/config.toml", mode = "template" }
 	if _, err := os.Stat(filepath.Join(targetDir, ".github/workflows/ci.yaml")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("init should not copy managed files, stat err=%v", err)
 	}
-	if !strings.Contains(stdout.String(), "created Sync manifest .driftline/sync.toml from y-writings/source-repo@0123456789abcdef0123456789abcdef01234567") {
-		t.Fatalf("unexpected stdout: %q", stdout.String())
+	if got, want := stdout.String(), "created Sync manifest .driftline/sync.toml from y-writings/source-repo@0123456789abcdef0123456789abcdef01234567\n"; got != want {
+		t.Fatalf("unexpected stdout: %q", got)
 	}
 }
 
@@ -114,7 +114,7 @@ func TestInitDoesNotReadOldRootContract(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	err := (Runner{Source: client}).Run([]string{"init", "y-writings/source-repo", "--target-dir", targetDir}, &stdout, &stderr)
-	if err == nil || !strings.Contains(err.Error(), "Contract not found: .driftline/contract.toml") {
+	if err == nil || !strings.HasPrefix(err.Error(), "Contract not found: .driftline/contract.toml: ") {
 		t.Fatalf("expected canonical Contract error, got %v", err)
 	}
 	if stdout.Len() != 0 || stderr.Len() != 0 {
@@ -162,8 +162,8 @@ config = { path = ".mise/config.toml", mode = "template" }
 	if strings.Contains(manifest, "force") || strings.Contains(manifest, "release") || strings.Contains(manifest, "mise") {
 		t.Fatalf("Sync manifest should not persist force or template entries:\n%s", manifest)
 	}
-	if !strings.Contains(stdout.String(), "created Sync manifest .driftline/sync.toml from y-writings/source-repo@0123456789abcdef0123456789abcdef01234567") {
-		t.Fatalf("unexpected stdout: %q", stdout.String())
+	if got, want := stdout.String(), "created Sync manifest .driftline/sync.toml from y-writings/source-repo@0123456789abcdef0123456789abcdef01234567\n"; got != want {
+		t.Fatalf("unexpected stdout: %q", got)
 	}
 }
 
@@ -185,7 +185,7 @@ func TestInitFailsOnExistingSyncManifestBeforeSourceAccess(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	err := (Runner{Source: sourceAccessFailingClient{}}).Run([]string{"init", "y-writings/source-repo", "--target-dir", targetDir}, &stdout, &stderr)
-	if err == nil || !strings.Contains(err.Error(), "Sync manifest already exists: .driftline/sync.toml") {
+	if err == nil || err.Error() != "Sync manifest already exists: .driftline/sync.toml" {
 		t.Fatalf("expected Sync manifest error before source access, got %v", err)
 	}
 }
@@ -229,7 +229,7 @@ func TestInitRejectsUnsafeMetadataDirectoryBeforeSourceAccess(t *testing.T) {
 
 			var stdout, stderr bytes.Buffer
 			err := (Runner{Source: sourceAccessFailingClient{}}).Run([]string{"init", "y-writings/source-repo", "--target-dir", targetDir}, &stdout, &stderr)
-			if err == nil || !strings.Contains(err.Error(), "driftline metadata path is not a real directory: .driftline") {
+			if err == nil || err.Error() != "driftline metadata path is not a real directory: .driftline" {
 				t.Fatalf("expected canonical metadata directory error before source access, got %v", err)
 			}
 			if strings.Contains(err.Error(), "source should not be accessed") {
@@ -296,7 +296,7 @@ func TestInitRejectsUnsafeMetadataSyncManifestBeforeSourceAccess(t *testing.T) {
 
 			var stdout, stderr bytes.Buffer
 			err := (Runner{Source: sourceAccessFailingClient{}}).Run([]string{"init", "y-writings/source-repo", "--target-dir", targetDir}, &stdout, &stderr)
-			if err == nil || !strings.Contains(err.Error(), "Sync manifest path is not a regular file: .driftline/sync.toml") {
+			if err == nil || err.Error() != "Sync manifest path is not a regular file: .driftline/sync.toml" {
 				t.Fatalf("expected canonical Sync manifest error before source access, got %v", err)
 			}
 			if strings.Contains(err.Error(), "source should not be accessed") {
@@ -453,7 +453,7 @@ func TestCheckReportsMissingManagedEntryAndUpdateWritesCanonicalSyncManifest(t *
 	targetDir := t.TempDir()
 	var stdout, stderr bytes.Buffer
 	err := (Runner{Source: sourceAccessFailingClient{}}).Run([]string{"check", "--target-dir", targetDir}, &stdout, &stderr)
-	if err == nil || !strings.Contains(err.Error(), "Sync manifest not found: .driftline/sync.toml") {
+	if err == nil || err.Error() != "Sync manifest not found: .driftline/sync.toml" {
 		t.Fatalf("expected canonical missing Sync manifest error, got %v", err)
 	}
 
