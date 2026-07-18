@@ -52,7 +52,7 @@ func (f commandFakeSourceClient) ReadFile(repository string, commit string, path
 	return data, nil
 }
 
-func TestInitCreatesTargetConfigAndPlacesTemplates(t *testing.T) {
+func TestInitCreatesSyncManifestAndPlacesTemplates(t *testing.T) {
 	targetDir := t.TempDir()
 	writeFile(t, targetDir, ".mise/config.toml", "target-owned\n")
 	client := newCommandSourceClient("main", `version = 2
@@ -75,15 +75,15 @@ config = { path = ".mise/config.toml", mode = "template" }
 		t.Fatalf("init failed: %v\nstderr: %s", err, stderr.String())
 	}
 
-	config := readFile(t, targetDir, driftline.TargetConfigPath)
+	manifest := readFile(t, targetDir, driftline.TargetConfigPath)
 	for _, want := range []string{"version = 2", `[source]`, `repository = "y-writings/source-repo"`, `[files.github-workflow]`, `ci = ".github/workflows/ci.yaml"`} {
-		if !strings.Contains(config, want) {
-			t.Fatalf("generated config missing %q:\n%s", want, config)
+		if !strings.Contains(manifest, want) {
+			t.Fatalf("generated Sync manifest missing %q:\n%s", want, manifest)
 		}
 	}
 	for _, removed := range []string{"release", "mise", "template", "path_overrides", "if_not_exists"} {
-		if strings.Contains(config, removed) {
-			t.Fatalf("target config contains non-managed or old field %q:\n%s", removed, config)
+		if strings.Contains(manifest, removed) {
+			t.Fatalf("Sync manifest contains non-managed or old field %q:\n%s", removed, manifest)
 		}
 	}
 	if got := readFile(t, targetDir, ".github/workflows/release.yaml"); got != "release\n" {
@@ -131,12 +131,12 @@ config = { path = ".mise/config.toml", mode = "template" }
 	if got := readFile(t, targetDir, ".mise/config.toml"); got != "target-template\n" {
 		t.Fatalf("existing template should be skipped, got %q", got)
 	}
-	config := readFile(t, targetDir, driftline.TargetConfigPath)
-	if !strings.Contains(config, `[files.github-workflow]`) || !strings.Contains(config, `ci = ".github/workflows/ci.yaml"`) {
-		t.Fatalf("target config should record adopted managed target:\n%s", config)
+	manifest := readFile(t, targetDir, driftline.TargetConfigPath)
+	if !strings.Contains(manifest, `[files.github-workflow]`) || !strings.Contains(manifest, `ci = ".github/workflows/ci.yaml"`) {
+		t.Fatalf("Sync manifest should record adopted managed target:\n%s", manifest)
 	}
-	if strings.Contains(config, "force") || strings.Contains(config, "release") || strings.Contains(config, "mise") {
-		t.Fatalf("target config should not persist force or template entries:\n%s", config)
+	if strings.Contains(manifest, "force") || strings.Contains(manifest, "release") || strings.Contains(manifest, "mise") {
+		t.Fatalf("Sync manifest should not persist force or template entries:\n%s", manifest)
 	}
 	if !strings.Contains(stdout.String(), "created .driftline-target.toml from y-writings/source-repo@0123456789abcdef0123456789abcdef01234567") {
 		t.Fatalf("unexpected stdout: %q", stdout.String())
@@ -155,42 +155,42 @@ func TestInitRefPreservesInputRef(t *testing.T) {
 	}
 }
 
-func TestInitFailsOnExistingTargetConfigBeforeSourceAccess(t *testing.T) {
+func TestInitFailsOnExistingSyncManifestBeforeSourceAccess(t *testing.T) {
 	targetDir := t.TempDir()
 	writeFile(t, targetDir, driftline.TargetConfigPath, "existing\n")
 
 	var stdout, stderr bytes.Buffer
 	err := (Runner{Source: sourceAccessFailingClient{}}).Run([]string{"init", "y-writings/source-repo", "--target-dir", targetDir}, &stdout, &stderr)
 	if err == nil || !strings.Contains(err.Error(), "target config already exists") {
-		t.Fatalf("expected target config error before source access, got %v", err)
+		t.Fatalf("expected Sync manifest error before source access, got %v", err)
 	}
 }
 
-func TestInitFailsOnBrokenSymlinkTargetConfigBeforeSourceAccess(t *testing.T) {
+func TestInitFailsOnBrokenSymlinkSyncManifestBeforeSourceAccess(t *testing.T) {
 	targetDir := t.TempDir()
-	if err := os.Symlink(filepath.Join(t.TempDir(), "missing-target-config"), filepath.Join(targetDir, driftline.TargetConfigPath)); err != nil {
+	if err := os.Symlink(filepath.Join(t.TempDir(), "missing-sync-manifest"), filepath.Join(targetDir, driftline.TargetConfigPath)); err != nil {
 		t.Fatal(err)
 	}
 
 	var stdout, stderr bytes.Buffer
 	err := (Runner{Source: sourceAccessFailingClient{}}).Run([]string{"init", "y-writings/source-repo", "--target-dir", targetDir}, &stdout, &stderr)
 	if err == nil {
-		t.Fatal("expected target config error before source access")
+		t.Fatal("expected Sync manifest error before source access")
 	}
 	if strings.Contains(err.Error(), "source should not be accessed") {
-		t.Fatalf("source was accessed before rejecting existing target config: %v", err)
+		t.Fatalf("source was accessed before rejecting existing Sync manifest: %v", err)
 	}
 	if !strings.Contains(err.Error(), "target config already exists") {
-		t.Fatalf("expected target config error before source access, got %v", err)
+		t.Fatalf("expected Sync manifest error before source access, got %v", err)
 	}
 }
 
-func TestInitFailsBeforeWritingWhenConfigOrManagedTargetExists(t *testing.T) {
+func TestInitFailsBeforeWritingWhenSyncManifestOrManagedTargetExists(t *testing.T) {
 	for name, tt := range map[string]struct {
 		setup        func(string)
 		wantGuidance bool
 	}{
-		"target config exists": {
+		"Sync manifest exists": {
 			setup: func(targetDir string) {
 				writeFile(t, targetDir, driftline.TargetConfigPath, "existing\n")
 			},
@@ -238,13 +238,13 @@ release = { path = ".github/workflows/release.yaml", mode = "template" }
 }
 
 func TestInitRejectsSourceFilesTargetingReservedPaths(t *testing.T) {
-	for name, sourceManifest := range map[string]string{
-		"managed target config": `version = 2
+	for name, contract := range map[string]string{
+		"managed Sync manifest path": `version = 2
 
 [files.driftline]
 target = { path = ".driftline-target.toml", mode = "managed" }
 `,
-		"template target config": `version = 2
+		"template Sync manifest path": `version = 2
 
 [files.driftline]
 target = { path = ".driftline-target.toml", mode = "template" }
@@ -262,7 +262,7 @@ lock = { path = "driftline-lock.yaml", mode = "template" }
 	} {
 		t.Run(name, func(t *testing.T) {
 			targetDir := t.TempDir()
-			client := newCommandSourceClient("main", sourceManifest, map[string]string{
+			client := newCommandSourceClient("main", contract, map[string]string{
 				driftline.TargetConfigPath: "template bytes\n",
 				"driftline-lock.yaml":      "lock bytes\n",
 			})
@@ -313,7 +313,7 @@ func TestHelpOmitsPruneAndPruneCommandIsRemoved(t *testing.T) {
 
 func TestCheckReportsMissingManagedEntryAndUpdateCreatesNoLock(t *testing.T) {
 	targetDir := t.TempDir()
-	writeFile(t, targetDir, driftline.TargetConfigPath, targetConfigTOML(""))
+	writeFile(t, targetDir, driftline.TargetConfigPath, syncManifestTOML(""))
 	client := newCommandSourceClient("main", `version = 2
 
 [files.github-workflow]
@@ -326,7 +326,7 @@ ci = { path = ".github/workflows/ci.yaml", mode = "managed" }
 	if err == nil {
 		t.Fatal("expected check drift")
 	}
-	for _, want := range []string{"target-config-add github-workflow.ci: add target config entry", "add github-workflow.ci: target file is missing"} {
+	for _, want := range []string{"sync-manifest-add github-workflow.ci: add Sync manifest entry", "add github-workflow.ci: target file is missing"} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Fatalf("check output missing %q: %q", want, stdout.String())
 		}
@@ -336,7 +336,7 @@ ci = { path = ".github/workflows/ci.yaml", mode = "managed" }
 	if err := runner.Run([]string{"update", "--target-dir", targetDir}, &stdout, &stderr); err != nil {
 		t.Fatalf("update failed: %v", err)
 	}
-	for _, want := range []string{"target-config-add github-workflow.ci: add target config entry", "add github-workflow.ci: target file is missing"} {
+	for _, want := range []string{"sync-manifest-add github-workflow.ci: add Sync manifest entry", "add github-workflow.ci: target file is missing"} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Fatalf("update output missing %q: %q", want, stdout.String())
 		}
@@ -344,9 +344,9 @@ ci = { path = ".github/workflows/ci.yaml", mode = "managed" }
 	if got := readFile(t, targetDir, ".github/workflows/ci.yaml"); got != "ci\n" {
 		t.Fatalf("unexpected copied workflow: %q", got)
 	}
-	config := readFile(t, targetDir, driftline.TargetConfigPath)
-	if !strings.Contains(config, `[files.github-workflow]`) || !strings.Contains(config, `ci = ".github/workflows/ci.yaml"`) {
-		t.Fatalf("target config was not updated:\n%s", config)
+	manifest := readFile(t, targetDir, driftline.TargetConfigPath)
+	if !strings.Contains(manifest, `[files.github-workflow]`) || !strings.Contains(manifest, `ci = ".github/workflows/ci.yaml"`) {
+		t.Fatalf("Sync manifest was not updated:\n%s", manifest)
 	}
 	assertFileMissing(t, targetDir, "driftline-lock.yaml")
 	assertFileMissing(t, targetDir, ".gitignore")
@@ -354,7 +354,7 @@ ci = { path = ".github/workflows/ci.yaml", mode = "managed" }
 
 func TestUpdateRejectsManagedDriftlineLockTarget(t *testing.T) {
 	targetDir := t.TempDir()
-	writeFile(t, targetDir, driftline.TargetConfigPath, targetConfigTOML(""))
+	writeFile(t, targetDir, driftline.TargetConfigPath, syncManifestTOML(""))
 	client := newCommandSourceClient("main", `version = 2
 
 [files.driftline]
@@ -371,7 +371,7 @@ lock = { path = "driftline-lock.yaml", mode = "managed" }
 
 func TestUpdateRemovesManagedFileDeletedFromSource(t *testing.T) {
 	targetDir := t.TempDir()
-	writeFile(t, targetDir, driftline.TargetConfigPath, targetConfigTOML(`[files.github-workflow]
+	writeFile(t, targetDir, driftline.TargetConfigPath, syncManifestTOML(`[files.github-workflow]
 ci = ".github/workflows/ci.yaml"
 `))
 	writeFile(t, targetDir, ".github/workflows/ci.yaml", "old\n")
@@ -382,15 +382,15 @@ ci = ".github/workflows/ci.yaml"
 		t.Fatalf("update failed: %v", err)
 	}
 	assertFileMissing(t, targetDir, ".github/workflows/ci.yaml")
-	config := readFile(t, targetDir, driftline.TargetConfigPath)
-	if strings.Contains(config, "github-workflow") || strings.Contains(config, "ci") {
-		t.Fatalf("target config entry should be removed:\n%s", config)
+	manifest := readFile(t, targetDir, driftline.TargetConfigPath)
+	if strings.Contains(manifest, "github-workflow") || strings.Contains(manifest, "ci") {
+		t.Fatalf("Sync manifest entry should be removed:\n%s", manifest)
 	}
 }
 
-func TestUpdateRemovesStaleConfigWhenTargetPathBlockedByFile(t *testing.T) {
+func TestUpdateRemovesStaleSyncManifestEntryWhenTargetPathBlockedByFile(t *testing.T) {
 	targetDir := t.TempDir()
-	writeFile(t, targetDir, driftline.TargetConfigPath, targetConfigTOML(`[files.old]
+	writeFile(t, targetDir, driftline.TargetConfigPath, syncManifestTOML(`[files.old]
 config = "config/old"
 `))
 	writeFile(t, targetDir, "config", "target-owned\n")
@@ -403,15 +403,15 @@ config = "config/old"
 	if got := readFile(t, targetDir, "config"); got != "target-owned\n" {
 		t.Fatalf("parent file should be left untouched, got %q", got)
 	}
-	config := readFile(t, targetDir, driftline.TargetConfigPath)
-	if strings.Contains(config, "old") {
-		t.Fatalf("stale target config entry should be removed:\n%s", config)
+	manifest := readFile(t, targetDir, driftline.TargetConfigPath)
+	if strings.Contains(manifest, "old") {
+		t.Fatalf("stale Sync manifest entry should be removed:\n%s", manifest)
 	}
 }
 
 func TestUpdateLeavesDirectoryAtStaleManagedPath(t *testing.T) {
 	targetDir := t.TempDir()
-	writeFile(t, targetDir, driftline.TargetConfigPath, targetConfigTOML(`[files.old]
+	writeFile(t, targetDir, driftline.TargetConfigPath, syncManifestTOML(`[files.old]
 config = "dir"
 `))
 	if err := os.MkdirAll(filepath.Join(targetDir, "dir"), 0o755); err != nil {
@@ -427,15 +427,15 @@ config = "dir"
 	if err != nil || !info.IsDir() {
 		t.Fatalf("stale managed path directory should be left untouched, info=%#v err=%v", info, err)
 	}
-	config := readFile(t, targetDir, driftline.TargetConfigPath)
-	if strings.Contains(config, "old") {
-		t.Fatalf("stale target config entry should be removed:\n%s", config)
+	manifest := readFile(t, targetDir, driftline.TargetConfigPath)
+	if strings.Contains(manifest, "old") {
+		t.Fatalf("stale Sync manifest entry should be removed:\n%s", manifest)
 	}
 }
 
-func TestUpdatePreservesTargetConfigWhenOnlyManagedFileChanges(t *testing.T) {
+func TestUpdatePreservesSyncManifestWhenOnlyManagedFileChanges(t *testing.T) {
 	targetDir := t.TempDir()
-	targetConfig := `version = 2
+	syncManifest := `version = 2
 
 # keep target-side comments and order
 [source]
@@ -446,7 +446,7 @@ repository = "y-writings/source-repo"
 # local placement rationale
 ci = ".github/workflows/ci.yaml"
 `
-	writeFile(t, targetDir, driftline.TargetConfigPath, targetConfig)
+	writeFile(t, targetDir, driftline.TargetConfigPath, syncManifest)
 	writeFile(t, targetDir, ".github/workflows/ci.yaml", "old\n")
 	client := newCommandSourceClient("main", `version = 2
 
@@ -461,14 +461,14 @@ ci = { path = ".github/workflows/ci.yaml", mode = "managed" }
 	if got := readFile(t, targetDir, ".github/workflows/ci.yaml"); got != "new\n" {
 		t.Fatalf("managed file should be updated, got %q", got)
 	}
-	if got := readFile(t, targetDir, driftline.TargetConfigPath); got != targetConfig {
-		t.Fatalf("target config should not be rewritten for file-only update:\n%s", got)
+	if got := readFile(t, targetDir, driftline.TargetConfigPath); got != syncManifest {
+		t.Fatalf("Sync manifest should not be rewritten for file-only update:\n%s", got)
 	}
 }
 
-func TestUpdatePreservesTargetConfigWhenAlreadySynced(t *testing.T) {
+func TestUpdatePreservesSyncManifestWhenAlreadySynced(t *testing.T) {
 	targetDir := t.TempDir()
-	targetConfig := `version = 2
+	syncManifest := `version = 2
 
 # keep target-side comments and order
 [source]
@@ -478,7 +478,7 @@ repository = "y-writings/source-repo"
 [files.github-workflow]
 ci = ".github/workflows/ci.yaml"
 `
-	writeFile(t, targetDir, driftline.TargetConfigPath, targetConfig)
+	writeFile(t, targetDir, driftline.TargetConfigPath, syncManifest)
 	writeFile(t, targetDir, ".github/workflows/ci.yaml", "ci\n")
 	client := newCommandSourceClient("main", `version = 2
 
@@ -490,14 +490,14 @@ ci = { path = ".github/workflows/ci.yaml", mode = "managed" }
 	if err := (Runner{Source: client}).Run([]string{"update", "--target-dir", targetDir}, &stdout, &stderr); err != nil {
 		t.Fatalf("update failed: %v", err)
 	}
-	if got := readFile(t, targetDir, driftline.TargetConfigPath); got != targetConfig {
-		t.Fatalf("target config should not be rewritten when already synced:\n%s", got)
+	if got := readFile(t, targetDir, driftline.TargetConfigPath); got != syncManifest {
+		t.Fatalf("Sync manifest should not be rewritten when already synced:\n%s", got)
 	}
 }
 
-func TestUpdateManagedToTemplateLeavesTargetFileAndRemovesConfig(t *testing.T) {
+func TestUpdateManagedToTemplateLeavesTargetFileAndRemovesSyncManifestEntry(t *testing.T) {
 	targetDir := t.TempDir()
-	writeFile(t, targetDir, driftline.TargetConfigPath, targetConfigTOML(`[files.github-workflow]
+	writeFile(t, targetDir, driftline.TargetConfigPath, syncManifestTOML(`[files.github-workflow]
 release = ".github/workflows/release.yaml"
 `))
 	writeFile(t, targetDir, ".github/workflows/release.yaml", "target-owned\n")
@@ -514,15 +514,15 @@ release = { path = ".github/workflows/release.yaml", mode = "template" }
 	if got := readFile(t, targetDir, ".github/workflows/release.yaml"); got != "target-owned\n" {
 		t.Fatalf("managed-to-template should leave target untouched, got %q", got)
 	}
-	config := readFile(t, targetDir, driftline.TargetConfigPath)
-	if strings.Contains(config, "release") || strings.Contains(config, "github-workflow") {
-		t.Fatalf("target config entry should be removed:\n%s", config)
+	manifest := readFile(t, targetDir, driftline.TargetConfigPath)
+	if strings.Contains(manifest, "release") || strings.Contains(manifest, "github-workflow") {
+		t.Fatalf("Sync manifest entry should be removed:\n%s", manifest)
 	}
 }
 
 func TestUpdateConflictDoesNotWriteAndForceOverwritesOnce(t *testing.T) {
 	targetDir := t.TempDir()
-	writeFile(t, targetDir, driftline.TargetConfigPath, targetConfigTOML(""))
+	writeFile(t, targetDir, driftline.TargetConfigPath, syncManifestTOML(""))
 	writeFile(t, targetDir, ".github/workflows/ci.yaml", "target-owned\n")
 	client := newCommandSourceClient("main", `version = 2
 
@@ -544,8 +544,8 @@ ci = { path = ".github/workflows/ci.yaml", mode = "managed" }
 	if got := readFile(t, targetDir, ".github/workflows/ci.yaml"); got != "target-owned\n" {
 		t.Fatalf("conflict must not overwrite target, got %q", got)
 	}
-	if config := readFile(t, targetDir, driftline.TargetConfigPath); strings.Contains(config, "github-workflow") {
-		t.Fatalf("conflict must not update target config:\n%s", config)
+	if manifest := readFile(t, targetDir, driftline.TargetConfigPath); strings.Contains(manifest, "github-workflow") {
+		t.Fatalf("conflict must not update Sync manifest:\n%s", manifest)
 	}
 
 	stdout.Reset()
@@ -555,16 +555,16 @@ ci = { path = ".github/workflows/ci.yaml", mode = "managed" }
 	if got := readFile(t, targetDir, ".github/workflows/ci.yaml"); got != "source\n" {
 		t.Fatalf("forced update should overwrite target once, got %q", got)
 	}
-	config := readFile(t, targetDir, driftline.TargetConfigPath)
-	if !strings.Contains(config, `[files.github-workflow]`) || strings.Contains(config, "force") {
-		t.Fatalf("target config should contain only path entry, no force state:\n%s", config)
+	manifest := readFile(t, targetDir, driftline.TargetConfigPath)
+	if !strings.Contains(manifest, `[files.github-workflow]`) || strings.Contains(manifest, "force") {
+		t.Fatalf("Sync manifest should contain only path entry, no force state:\n%s", manifest)
 	}
 }
 
 func TestUpdateConflictsWhenNewManagedTargetIsBrokenSymlink(t *testing.T) {
 	targetDir := t.TempDir()
 	outsideDir := t.TempDir()
-	writeFile(t, targetDir, driftline.TargetConfigPath, targetConfigTOML(""))
+	writeFile(t, targetDir, driftline.TargetConfigPath, syncManifestTOML(""))
 	linkPath := filepath.Join(targetDir, ".github/workflows/ci.yaml")
 	if err := os.MkdirAll(filepath.Dir(linkPath), 0o755); err != nil {
 		t.Fatal(err)
@@ -596,15 +596,15 @@ ci = { path = ".github/workflows/ci.yaml", mode = "managed" }
 	if _, err := os.Stat(outsideTarget); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("update must not write through broken symlink, stat err=%v", err)
 	}
-	config := readFile(t, targetDir, driftline.TargetConfigPath)
-	if strings.Contains(config, "github-workflow") {
-		t.Fatalf("conflict must not update target config:\n%s", config)
+	manifest := readFile(t, targetDir, driftline.TargetConfigPath)
+	if strings.Contains(manifest, "github-workflow") {
+		t.Fatalf("conflict must not update Sync manifest:\n%s", manifest)
 	}
 }
 
 func TestUpdateReplacesStaleManagedFileWithDirectoryChild(t *testing.T) {
 	targetDir := t.TempDir()
-	writeFile(t, targetDir, driftline.TargetConfigPath, targetConfigTOML(`[files.old]
+	writeFile(t, targetDir, driftline.TargetConfigPath, syncManifestTOML(`[files.old]
 config = "dir"
 `))
 	writeFile(t, targetDir, "dir", "old\n")
@@ -621,15 +621,15 @@ config = { path = "dir/file", mode = "managed" }
 	if got := readFile(t, targetDir, "dir/file"); got != "new\n" {
 		t.Fatalf("unexpected child file content: %q", got)
 	}
-	config := readFile(t, targetDir, driftline.TargetConfigPath)
-	if strings.Contains(config, "old") || !strings.Contains(config, `[files.new]`) || !strings.Contains(config, `config = "dir/file"`) {
-		t.Fatalf("target config should move to new child entry:\n%s", config)
+	manifest := readFile(t, targetDir, driftline.TargetConfigPath)
+	if strings.Contains(manifest, "old") || !strings.Contains(manifest, `[files.new]`) || !strings.Contains(manifest, `config = "dir/file"`) {
+		t.Fatalf("Sync manifest should move to new child entry:\n%s", manifest)
 	}
 }
 
 func TestDiffReportsNonContentChanges(t *testing.T) {
 	targetDir := t.TempDir()
-	writeFile(t, targetDir, driftline.TargetConfigPath, targetConfigTOML(`[files.github-workflow]
+	writeFile(t, targetDir, driftline.TargetConfigPath, syncManifestTOML(`[files.github-workflow]
 ci = ".github/workflows/ci.yaml"
 `))
 	writeFile(t, targetDir, ".github/workflows/ci.yaml", "old\n")
@@ -640,7 +640,7 @@ ci = ".github/workflows/ci.yaml"
 	if err == nil {
 		t.Fatal("expected diff drift")
 	}
-	for _, want := range []string{"remove github-workflow.ci: managed file removed from source config", "target-config-remove github-workflow.ci: remove target config entry"} {
+	for _, want := range []string{"remove github-workflow.ci: managed file removed from Contract", "sync-manifest-remove github-workflow.ci: remove Sync manifest entry"} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Fatalf("diff output missing %q:\n%s", want, stdout.String())
 		}
@@ -721,7 +721,7 @@ func TestParseOptionsAcceptsStandardFlagFormsAndUpdateForce(t *testing.T) {
 	}
 }
 
-func targetConfigTOML(files string) string {
+func syncManifestTOML(files string) string {
 	return `version = 2
 
 [source]
@@ -730,14 +730,14 @@ ref = "main"
 ` + files
 }
 
-func newCommandSourceClient(ref string, sourceManifest string, files map[string]string) commandFakeSourceClient {
+func newCommandSourceClient(ref string, contract string, files map[string]string) commandFakeSourceClient {
 	commit := "0123456789abcdef0123456789abcdef01234567"
 	client := commandFakeSourceClient{
 		defaultRef:    ref,
 		defaultCommit: commit,
 		refs:          map[string]string{"y-writings/source-repo@" + ref: commit},
 		files: map[string][]byte{
-			"y-writings/source-repo@" + commit + ":" + driftline.SourceManifestPath: []byte(sourceManifest),
+			"y-writings/source-repo@" + commit + ":" + driftline.SourceManifestPath: []byte(contract),
 		},
 	}
 	for path, content := range files {

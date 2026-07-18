@@ -9,7 +9,7 @@ import (
 
 func TestTargetRepositoryApplyRejectsConflictPlanBeforeWriting(t *testing.T) {
 	targetDir := t.TempDir()
-	writeTargetRepositoryTestFile(t, targetDir, TargetConfigPath, targetConfigTOMLForApplyTest(""))
+	writeTargetRepositoryTestFile(t, targetDir, TargetConfigPath, syncManifestTOMLForApplyTest(""))
 	writeTargetRepositoryTestFile(t, targetDir, "existing.txt", "target-owned\n")
 
 	plan := Plan{
@@ -17,7 +17,7 @@ func TestTargetRepositoryApplyRejectsConflictPlanBeforeWriting(t *testing.T) {
 			{ID: "tool.config", Target: "existing.txt", Status: StatusConflict, Reason: "target already exists", ForceAllowed: true},
 			{ID: "tool.config", Target: "existing.txt", TargetPath: filepath.Join(targetDir, "existing.txt"), SourceBytes: []byte("source\n"), Status: StatusUpdate, WritesTarget: true},
 		},
-		NextConfig: TargetConfig{Version: 2, Source: TargetSource{Repository: "y-writings/source-repo", Ref: "main"}, Files: map[string]map[string]string{"tool": {"config": "existing.txt"}}},
+		NextSyncManifest: SyncManifest{Version: 2, Source: SyncSource{Repository: "y-writings/source-repo", Ref: "main"}, Files: map[string]map[string]string{"tool": {"config": "existing.txt"}}},
 	}
 
 	err := TargetRepository{Root: targetDir}.Apply(plan)
@@ -30,15 +30,15 @@ func TestTargetRepositoryApplyRejectsConflictPlanBeforeWriting(t *testing.T) {
 	if got := readTargetRepositoryTestFile(t, targetDir, "existing.txt"); got != "target-owned\n" {
 		t.Fatalf("conflict plan must not write target file, got %q", got)
 	}
-	config := readTargetRepositoryTestFile(t, targetDir, TargetConfigPath)
-	if strings.Contains(config, "tool") {
-		t.Fatalf("conflict plan must not commit target config:\n%s", config)
+	manifest := readTargetRepositoryTestFile(t, targetDir, TargetConfigPath)
+	if strings.Contains(manifest, "tool") {
+		t.Fatalf("conflict plan must not commit Sync manifest:\n%s", manifest)
 	}
 }
 
 func TestTargetRepositoryApplyDeletesBeforeWritingChildPath(t *testing.T) {
 	targetDir := t.TempDir()
-	writeTargetRepositoryTestFile(t, targetDir, TargetConfigPath, targetConfigTOMLForApplyTest(`[files.old]
+	writeTargetRepositoryTestFile(t, targetDir, TargetConfigPath, syncManifestTOMLForApplyTest(`[files.old]
 config = "dir"
 `))
 	writeTargetRepositoryTestFile(t, targetDir, "dir", "old\n")
@@ -46,11 +46,11 @@ config = "dir"
 	plan := Plan{
 		Changes: []Change{
 			{ID: "old.config", Target: "dir", TargetPath: filepath.Join(targetDir, "dir"), Status: StatusRemove, DeletesTarget: true},
-			{ID: "old.config", Target: "dir", Status: StatusTargetConfigRemove},
-			{ID: "new.config", Target: "dir/file", Status: StatusTargetConfigAdd},
+			{ID: "old.config", Target: "dir", Status: StatusSyncManifestRemove},
+			{ID: "new.config", Target: "dir/file", Status: StatusSyncManifestAdd},
 			{ID: "new.config", Target: "dir/file", TargetPath: filepath.Join(targetDir, "dir/file"), SourceBytes: []byte("new\n"), Status: StatusAdd, WritesTarget: true},
 		},
-		NextConfig: TargetConfig{Version: 2, Source: TargetSource{Repository: "y-writings/source-repo", Ref: "main"}, Files: map[string]map[string]string{"new": {"config": "dir/file"}}},
+		NextSyncManifest: SyncManifest{Version: 2, Source: SyncSource{Repository: "y-writings/source-repo", Ref: "main"}, Files: map[string]map[string]string{"new": {"config": "dir/file"}}},
 	}
 
 	if err := (TargetRepository{Root: targetDir}).Apply(plan); err != nil {
@@ -59,37 +59,37 @@ config = "dir"
 	if got := readTargetRepositoryTestFile(t, targetDir, "dir/file"); got != "new\n" {
 		t.Fatalf("unexpected child file content: %q", got)
 	}
-	config := readTargetRepositoryTestFile(t, targetDir, TargetConfigPath)
-	if strings.Contains(config, "old") || !strings.Contains(config, `[files.new]`) || !strings.Contains(config, `config = "dir/file"`) {
-		t.Fatalf("target config should move to new child entry:\n%s", config)
+	manifest := readTargetRepositoryTestFile(t, targetDir, TargetConfigPath)
+	if strings.Contains(manifest, "old") || !strings.Contains(manifest, `[files.new]`) || !strings.Contains(manifest, `config = "dir/file"`) {
+		t.Fatalf("Sync manifest should move to new child entry:\n%s", manifest)
 	}
 }
 
-func TestTargetRepositoryApplyDoesNotCommitConfigWhenWriteFails(t *testing.T) {
+func TestTargetRepositoryApplyDoesNotCommitSyncManifestWhenWriteFails(t *testing.T) {
 	targetDir := t.TempDir()
-	originalConfig := targetConfigTOMLForApplyTest("")
-	writeTargetRepositoryTestFile(t, targetDir, TargetConfigPath, originalConfig)
+	originalSyncManifest := syncManifestTOMLForApplyTest("")
+	writeTargetRepositoryTestFile(t, targetDir, TargetConfigPath, originalSyncManifest)
 	writeTargetRepositoryTestFile(t, targetDir, "blocked", "target-owned\n")
 
 	plan := Plan{
 		Changes: []Change{
-			{ID: "tool.config", Target: "blocked/file.txt", Status: StatusTargetConfigAdd},
+			{ID: "tool.config", Target: "blocked/file.txt", Status: StatusSyncManifestAdd},
 			{ID: "tool.config", Target: "blocked/file.txt", TargetPath: filepath.Join(targetDir, "blocked/file.txt"), SourceBytes: []byte("source\n"), Status: StatusAdd, WritesTarget: true},
 		},
-		NextConfig: TargetConfig{Version: 2, Source: TargetSource{Repository: "y-writings/source-repo", Ref: "main"}, Files: map[string]map[string]string{"tool": {"config": "blocked/file.txt"}}},
+		NextSyncManifest: SyncManifest{Version: 2, Source: SyncSource{Repository: "y-writings/source-repo", Ref: "main"}, Files: map[string]map[string]string{"tool": {"config": "blocked/file.txt"}}},
 	}
 
 	if err := (TargetRepository{Root: targetDir}).Apply(plan); err == nil {
 		t.Fatal("expected write failure")
 	}
-	if got := readTargetRepositoryTestFile(t, targetDir, TargetConfigPath); got != originalConfig {
-		t.Fatalf("target config must not be committed after write failure:\n%s", got)
+	if got := readTargetRepositoryTestFile(t, targetDir, TargetConfigPath); got != originalSyncManifest {
+		t.Fatalf("Sync manifest must not be committed after write failure:\n%s", got)
 	}
 }
 
-func TestTargetRepositoryApplyDoesNotRewriteConfigForFileOnlyUpdate(t *testing.T) {
+func TestTargetRepositoryApplyDoesNotRewriteSyncManifestForFileOnlyUpdate(t *testing.T) {
 	targetDir := t.TempDir()
-	originalConfig := `version = 2
+	originalSyncManifest := `version = 2
 
 # keep target-side comments and order
 [source]
@@ -100,14 +100,14 @@ repository = "y-writings/source-repo"
 # local placement rationale
 ci = ".github/workflows/ci.yaml"
 `
-	writeTargetRepositoryTestFile(t, targetDir, TargetConfigPath, originalConfig)
+	writeTargetRepositoryTestFile(t, targetDir, TargetConfigPath, originalSyncManifest)
 	writeTargetRepositoryTestFile(t, targetDir, ".github/workflows/ci.yaml", "old\n")
 
 	plan := Plan{
 		Changes: []Change{
 			{ID: "github-workflow.ci", Target: ".github/workflows/ci.yaml", TargetPath: filepath.Join(targetDir, ".github/workflows/ci.yaml"), SourceBytes: []byte("new\n"), Status: StatusUpdate, WritesTarget: true},
 		},
-		NextConfig: TargetConfig{Version: 2, Source: TargetSource{Repository: "y-writings/source-repo", Ref: "main"}, Files: map[string]map[string]string{"github-workflow": {"ci": ".github/workflows/ci.yaml"}}},
+		NextSyncManifest: SyncManifest{Version: 2, Source: SyncSource{Repository: "y-writings/source-repo", Ref: "main"}, Files: map[string]map[string]string{"github-workflow": {"ci": ".github/workflows/ci.yaml"}}},
 	}
 
 	if err := (TargetRepository{Root: targetDir}).Apply(plan); err != nil {
@@ -116,12 +116,12 @@ ci = ".github/workflows/ci.yaml"
 	if got := readTargetRepositoryTestFile(t, targetDir, ".github/workflows/ci.yaml"); got != "new\n" {
 		t.Fatalf("managed file should be updated, got %q", got)
 	}
-	if got := readTargetRepositoryTestFile(t, targetDir, TargetConfigPath); got != originalConfig {
-		t.Fatalf("target config should not be rewritten for file-only update:\n%s", got)
+	if got := readTargetRepositoryTestFile(t, targetDir, TargetConfigPath); got != originalSyncManifest {
+		t.Fatalf("Sync manifest should not be rewritten for file-only update:\n%s", got)
 	}
 }
 
-func targetConfigTOMLForApplyTest(files string) string {
+func syncManifestTOMLForApplyTest(files string) string {
 	return `version = 2
 
 [source]

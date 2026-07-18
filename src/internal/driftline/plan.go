@@ -16,13 +16,13 @@ type PlanOptions struct {
 }
 
 type Plan struct {
-	Repository string
-	Ref        string
-	Commit     string
-	Config     TargetConfig
-	Manifest   SourceManifest
-	Changes    []Change
-	NextConfig TargetConfig
+	Repository       string
+	Ref              string
+	Commit           string
+	SyncManifest     SyncManifest
+	Contract         Contract
+	Changes          []Change
+	NextSyncManifest SyncManifest
 }
 
 func (p Plan) HasConflicts() bool {
@@ -47,71 +47,71 @@ func BuildPlan(opts PlanOptions) (Plan, error) {
 		}
 	}
 
-	configPath := filepath.Join(opts.TargetDir, TargetConfigPath)
-	config, err := LoadTargetConfig(configPath)
+	syncManifestPath := filepath.Join(opts.TargetDir, TargetConfigPath)
+	syncManifest, err := LoadTargetConfig(syncManifestPath)
 	if err != nil {
 		return Plan{}, err
 	}
-	commit, err := opts.Source.ResolveRef(config.Source.Repository, config.Source.Ref)
+	commit, err := opts.Source.ResolveRef(syncManifest.Source.Repository, syncManifest.Source.Ref)
 	if err != nil {
 		return Plan{}, err
 	}
-	manifestBytes, err := opts.Source.ReadFile(config.Source.Repository, commit, SourceManifestPath)
+	contractBytes, err := opts.Source.ReadFile(syncManifest.Source.Repository, commit, SourceManifestPath)
 	if err != nil {
 		return Plan{}, fmt.Errorf(".driftline-source.toml not found in source repository: %w", err)
 	}
-	manifest, err := LoadSourceManifestBytes(manifestBytes)
+	contract, err := LoadContractBytes(contractBytes)
 	if err != nil {
 		return Plan{}, err
 	}
 
-	builder := planBuilder{opts: opts, config: config, manifest: manifest, commit: commit}
+	builder := planBuilder{opts: opts, syncManifest: syncManifest, contract: contract, commit: commit}
 	return builder.build()
 }
 
 type planBuilder struct {
-	opts     PlanOptions
-	config   TargetConfig
-	manifest SourceManifest
-	commit   string
+	opts         PlanOptions
+	syncManifest SyncManifest
+	contract     Contract
+	commit       string
 }
 
 type resolvedManagedFile struct {
-	SourceEntry
+	ContractEntry
 	target     string
 	declared   bool
 	staleOwner string
 }
 
 func (b planBuilder) build() (Plan, error) {
-	sourceByKey := map[string]SourceEntry{}
+	contractByKey := map[string]ContractEntry{}
 	desiredManagedKeys := map[string]struct{}{}
-	managed := []SourceEntry{}
-	for _, entry := range SourceEntries(b.manifest) {
-		sourceByKey[entry.Key] = entry
+	managed := []ContractEntry{}
+	for _, entry := range ContractEntries(b.contract) {
+		contractByKey[entry.Key] = entry
 		if entry.Mode == ModeManaged {
 			managed = append(managed, entry)
 			desiredManagedKeys[entry.Key] = struct{}{}
 		}
 	}
 
-	targetByKey := map[string]TargetEntry{}
+	syncByKey := map[string]SyncEntry{}
 	declaredTargets := map[string]string{}
-	for _, entry := range TargetEntries(b.config) {
-		targetByKey[entry.Key] = entry
+	for _, entry := range SyncEntries(b.syncManifest) {
+		syncByKey[entry.Key] = entry
 		declaredTargets[entry.Path] = entry.Key
 	}
-	staleDeleteTargets := staleDeleteTargetPaths(b.config, sourceByKey)
+	staleDeleteTargets := staleDeleteTargetPaths(b.syncManifest, contractByKey)
 
 	plan := Plan{
-		Repository: b.config.Source.Repository,
-		Ref:        b.config.Source.Ref,
-		Commit:     b.commit,
-		Config:     b.config,
-		Manifest:   b.manifest,
-		NextConfig: TargetConfig{
-			Version: b.config.Version,
-			Source:  b.config.Source,
+		Repository:   b.syncManifest.Source.Repository,
+		Ref:          b.syncManifest.Source.Ref,
+		Commit:       b.commit,
+		SyncManifest: b.syncManifest,
+		Contract:     b.contract,
+		NextSyncManifest: SyncManifest{
+			Version: b.syncManifest.Version,
+			Source:  b.syncManifest.Source,
 			Files:   map[string]map[string]string{},
 		},
 	}
@@ -122,8 +122,8 @@ func (b planBuilder) build() (Plan, error) {
 		if entry.Key == b.opts.ForceKey {
 			forceMatched = true
 		}
-		resolved := resolvedManagedFile{SourceEntry: entry, target: entry.Path}
-		if target, ok := targetByKey[entry.Key]; ok {
+		resolved := resolvedManagedFile{ContractEntry: entry, target: entry.Path}
+		if target, ok := syncByKey[entry.Key]; ok {
 			resolved.target = target.Path
 			resolved.declared = true
 		}
@@ -154,14 +154,14 @@ func (b planBuilder) build() (Plan, error) {
 		return Plan{}, fmt.Errorf("force key %q does not match a managed source file", b.opts.ForceKey)
 	}
 
-	for _, target := range TargetEntries(b.config) {
+	for _, target := range SyncEntries(b.syncManifest) {
 		if owner, ok := usedTargets[target.Path]; ok {
 			if owner != target.Key {
-				plan.Changes = append(plan.Changes, targetConfigRemoveChange(target))
+				plan.Changes = append(plan.Changes, syncManifestRemoveChange(target))
 			}
 			continue
 		}
-		source, existsInSource := sourceByKey[target.Key]
+		source, existsInSource := contractByKey[target.Key]
 		if existsInSource && source.Mode == ModeTemplate {
 			plan.Changes = append(plan.Changes, Change{
 				ID:     target.Key,
@@ -169,7 +169,7 @@ func (b planBuilder) build() (Plan, error) {
 				Status: StatusModeTransition,
 				Reason: "source mode changed from managed to template",
 			})
-			plan.Changes = append(plan.Changes, targetConfigRemoveChange(target))
+			plan.Changes = append(plan.Changes, syncManifestRemoveChange(target))
 			continue
 		}
 		fullPath, err := PathWithin(b.opts.TargetDir, target.Path, fmt.Sprintf("target %q", target.Key))
@@ -181,10 +181,10 @@ func (b planBuilder) build() (Plan, error) {
 			Target:        target.Path,
 			TargetPath:    fullPath,
 			Status:        StatusRemove,
-			Reason:        "managed file removed from source config",
+			Reason:        "managed file removed from Contract",
 			DeletesTarget: true,
 		})
-		plan.Changes = append(plan.Changes, targetConfigRemoveChange(target))
+		plan.Changes = append(plan.Changes, syncManifestRemoveChange(target))
 	}
 
 	if len(plan.Changes) == 0 {
@@ -238,17 +238,17 @@ func (b planBuilder) addManagedChange(plan *Plan, file resolvedManagedFile, stal
 		return nil
 	}
 
-	ensureTargetGroup(plan.NextConfig.Files, file.Group)[file.File] = file.target
+	ensureSyncGroup(plan.NextSyncManifest.Files, file.Group)[file.File] = file.target
 	if !file.declared {
 		plan.Changes = append(plan.Changes, Change{
 			ID:     file.Key,
 			Target: file.target,
-			Status: StatusTargetConfigAdd,
-			Reason: "add target config entry",
+			Status: StatusSyncManifestAdd,
+			Reason: "add Sync manifest entry",
 		})
 	}
 
-	sourceBytes, err := b.opts.Source.ReadFile(b.config.Source.Repository, b.commit, file.Path)
+	sourceBytes, err := b.opts.Source.ReadFile(b.syncManifest.Source.Repository, b.commit, file.Path)
 	if err != nil {
 		return fmt.Errorf("source file not found in source repository: %w", err)
 	}
@@ -275,10 +275,10 @@ func (b planBuilder) addManagedChange(plan *Plan, file resolvedManagedFile, stal
 	return nil
 }
 
-func staleDeleteTargetPaths(config TargetConfig, sourceByKey map[string]SourceEntry) map[string]struct{} {
+func staleDeleteTargetPaths(syncManifest SyncManifest, contractByKey map[string]ContractEntry) map[string]struct{} {
 	targets := map[string]struct{}{}
-	for _, target := range TargetEntries(config) {
-		if _, ok := sourceByKey[target.Key]; !ok {
+	for _, target := range SyncEntries(syncManifest) {
+		if _, ok := contractByKey[target.Key]; !ok {
 			targets[target.Path] = struct{}{}
 		}
 	}
@@ -336,12 +336,12 @@ func conflictChange(file resolvedManagedFile, reason string, forceAllowed bool) 
 	}
 }
 
-func targetConfigRemoveChange(target TargetEntry) Change {
+func syncManifestRemoveChange(target SyncEntry) Change {
 	return Change{
 		ID:     target.Key,
 		Target: target.Path,
-		Status: StatusTargetConfigRemove,
-		Reason: "remove target config entry",
+		Status: StatusSyncManifestRemove,
+		Reason: "remove Sync manifest entry",
 	}
 }
 

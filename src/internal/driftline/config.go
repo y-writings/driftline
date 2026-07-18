@@ -21,40 +21,40 @@ const (
 
 var idPattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
-func LoadSourceManifestBytes(data []byte) (SourceManifest, error) {
-	var manifest SourceManifest
-	metadata, err := toml.Decode(string(data), &manifest)
+func LoadContractBytes(data []byte) (Contract, error) {
+	var contract Contract
+	metadata, err := toml.Decode(string(data), &contract)
 	if err != nil {
-		return manifest, fmt.Errorf("parse source manifest: %w", err)
+		return contract, fmt.Errorf("parse Contract: %w", err)
 	}
-	if err := rejectUndecoded("source manifest", metadata.Undecoded()); err != nil {
-		return manifest, err
+	if err := rejectUndecoded("Contract", metadata.Undecoded()); err != nil {
+		return contract, err
 	}
-	return manifest, validateSourceManifest(manifest)
+	return contract, validateContract(contract)
 }
 
-func LoadTargetConfig(path string) (TargetConfig, error) {
+func LoadTargetConfig(path string) (SyncManifest, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return TargetConfig{}, fmt.Errorf("read target config: %w", err)
+		return SyncManifest{}, fmt.Errorf("read Sync manifest: %w", err)
 	}
-	return LoadTargetConfigBytes(data)
+	return LoadSyncManifestBytes(data)
 }
 
-func LoadTargetConfigBytes(data []byte) (TargetConfig, error) {
-	var config TargetConfig
-	metadata, err := toml.Decode(string(data), &config)
+func LoadSyncManifestBytes(data []byte) (SyncManifest, error) {
+	var manifest SyncManifest
+	metadata, err := toml.Decode(string(data), &manifest)
 	if err != nil {
-		return config, fmt.Errorf("parse target config: %w", err)
+		return manifest, fmt.Errorf("parse Sync manifest: %w", err)
 	}
-	if err := rejectUndecoded("target config", metadata.Undecoded()); err != nil {
-		return config, err
+	if err := rejectUndecoded("Sync manifest", metadata.Undecoded()); err != nil {
+		return manifest, err
 	}
-	return config, validateTargetConfig(config)
+	return manifest, validateSyncManifest(manifest)
 }
 
-func WriteTargetConfig(path string, config TargetConfig) error {
-	commit, cleanup, err := PrepareTargetConfigWrite(path, config)
+func WriteTargetConfig(path string, manifest SyncManifest) error {
+	commit, cleanup, err := PrepareTargetConfigWrite(path, manifest)
 	if err != nil {
 		return err
 	}
@@ -62,23 +62,23 @@ func WriteTargetConfig(path string, config TargetConfig) error {
 	return commit()
 }
 
-func PrepareTargetConfigWrite(path string, config TargetConfig) (func() error, func() error, error) {
-	if err := validateTargetConfig(config); err != nil {
+func PrepareTargetConfigWrite(path string, manifest SyncManifest) (func() error, func() error, error) {
+	if err := validateSyncManifest(manifest); err != nil {
 		return nil, nil, err
 	}
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return nil, nil, fmt.Errorf("create target config directory: %w", err)
+		return nil, nil, fmt.Errorf("create Sync manifest directory: %w", err)
 	}
 	mode := os.FileMode(0o644)
 	if info, err := os.Stat(path); err == nil {
 		mode = info.Mode().Perm()
 	} else if !errors.Is(err, os.ErrNotExist) {
-		return nil, nil, fmt.Errorf("stat target config: %w", err)
+		return nil, nil, fmt.Errorf("stat Sync manifest: %w", err)
 	}
 	temp, err := os.CreateTemp(dir, ".driftline-target-*.toml")
 	if err != nil {
-		return nil, nil, fmt.Errorf("create target config temp file: %w", err)
+		return nil, nil, fmt.Errorf("create Sync manifest temp file: %w", err)
 	}
 	tempName := temp.Name()
 	cleanup := func() error {
@@ -88,19 +88,19 @@ func PrepareTargetConfigWrite(path string, config TargetConfig) (func() error, f
 		}
 		return err
 	}
-	if _, err := temp.WriteString(FormatTargetConfig(config)); err != nil {
+	if _, err := temp.WriteString(FormatSyncManifest(manifest)); err != nil {
 		temp.Close()
 		cleanup()
-		return nil, nil, fmt.Errorf("write target config temp file: %w", err)
+		return nil, nil, fmt.Errorf("write Sync manifest temp file: %w", err)
 	}
 	if err := temp.Chmod(mode); err != nil {
 		temp.Close()
 		cleanup()
-		return nil, nil, fmt.Errorf("chmod target config temp file: %w", err)
+		return nil, nil, fmt.Errorf("chmod Sync manifest temp file: %w", err)
 	}
 	if err := temp.Close(); err != nil {
 		cleanup()
-		return nil, nil, fmt.Errorf("close target config temp file: %w", err)
+		return nil, nil, fmt.Errorf("close Sync manifest temp file: %w", err)
 	}
 	commit := func() error {
 		return os.Rename(tempName, path)
@@ -108,19 +108,19 @@ func PrepareTargetConfigWrite(path string, config TargetConfig) (func() error, f
 	return commit, cleanup, nil
 }
 
-func FormatTargetConfig(config TargetConfig) string {
+func FormatSyncManifest(manifest SyncManifest) string {
 	var b strings.Builder
 	b.WriteString("version = 2\n\n")
 	b.WriteString("[source]\n")
 	b.WriteString("repository = ")
-	b.WriteString(strconv.Quote(config.Source.Repository))
+	b.WriteString(strconv.Quote(manifest.Source.Repository))
 	b.WriteString("\n")
 	b.WriteString("ref = ")
-	b.WriteString(strconv.Quote(config.Source.Ref))
+	b.WriteString(strconv.Quote(manifest.Source.Ref))
 	b.WriteString("\n")
 
-	for _, group := range sortedStringKeys(config.Files) {
-		files := config.Files[group]
+	for _, group := range sortedStringKeys(manifest.Files) {
+		files := manifest.Files[group]
 		if len(files) == 0 {
 			continue
 		}
@@ -137,36 +137,36 @@ func FormatTargetConfig(config TargetConfig) string {
 	return b.String()
 }
 
-func TargetConfigFromSourceManifest(repository string, ref string, manifest SourceManifest) (TargetConfig, error) {
+func SyncManifestFromContract(repository string, ref string, contract Contract) (SyncManifest, error) {
 	if err := ValidateRepository(repository); err != nil {
-		return TargetConfig{}, err
+		return SyncManifest{}, err
 	}
 	if err := ValidateRef(ref); err != nil {
-		return TargetConfig{}, err
+		return SyncManifest{}, err
 	}
-	config := TargetConfig{
+	manifest := SyncManifest{
 		Version: 2,
-		Source: TargetSource{
+		Source: SyncSource{
 			Repository: repository,
 			Ref:        ref,
 		},
 		Files: map[string]map[string]string{},
 	}
-	for _, entry := range SourceEntries(manifest) {
+	for _, entry := range ContractEntries(contract) {
 		if entry.Mode != ModeManaged {
 			continue
 		}
-		ensureTargetGroup(config.Files, entry.Group)[entry.File] = entry.Path
+		ensureSyncGroup(manifest.Files, entry.Group)[entry.File] = entry.Path
 	}
-	return config, validateTargetConfig(config)
+	return manifest, validateSyncManifest(manifest)
 }
 
-func SourceEntries(manifest SourceManifest) []SourceEntry {
-	entries := []SourceEntry{}
-	for _, group := range sortedStringKeys(manifest.Files) {
-		for _, file := range sortedStringKeys(manifest.Files[group]) {
-			item := manifest.Files[group][file]
-			entries = append(entries, SourceEntry{
+func ContractEntries(contract Contract) []ContractEntry {
+	entries := []ContractEntry{}
+	for _, group := range sortedStringKeys(contract.Files) {
+		for _, file := range sortedStringKeys(contract.Files[group]) {
+			item := contract.Files[group][file]
+			entries = append(entries, ContractEntry{
 				Group: group,
 				File:  file,
 				Key:   ConfigFileKey(group, file),
@@ -178,15 +178,15 @@ func SourceEntries(manifest SourceManifest) []SourceEntry {
 	return entries
 }
 
-func TargetEntries(config TargetConfig) []TargetEntry {
-	entries := []TargetEntry{}
-	for _, group := range sortedStringKeys(config.Files) {
-		for _, file := range sortedStringKeys(config.Files[group]) {
-			entries = append(entries, TargetEntry{
+func SyncEntries(manifest SyncManifest) []SyncEntry {
+	entries := []SyncEntry{}
+	for _, group := range sortedStringKeys(manifest.Files) {
+		for _, file := range sortedStringKeys(manifest.Files[group]) {
+			entries = append(entries, SyncEntry{
 				Group: group,
 				File:  file,
 				Key:   ConfigFileKey(group, file),
-				Path:  normalizedConfigPath(config.Files[group][file]),
+				Path:  normalizedConfigPath(manifest.Files[group][file]),
 			})
 		}
 	}
@@ -209,12 +209,12 @@ func rejectUndecoded(label string, keys []toml.Key) error {
 	return fmt.Errorf("%s contains unknown key %q", label, formatted[0])
 }
 
-func validateSourceManifest(manifest SourceManifest) error {
-	if manifest.Version != 2 {
-		return fmt.Errorf("unsupported source manifest version %d", manifest.Version)
+func validateContract(contract Contract) error {
+	if contract.Version != 2 {
+		return fmt.Errorf("unsupported Contract version %d", contract.Version)
 	}
 	seenPaths := map[string]string{}
-	for group, files := range manifest.Files {
+	for group, files := range contract.Files {
 		if err := validateConfigID(group, "source group"); err != nil {
 			return err
 		}
@@ -249,18 +249,18 @@ func validateSourceManifest(manifest SourceManifest) error {
 	return nil
 }
 
-func validateTargetConfig(config TargetConfig) error {
-	if config.Version != 2 {
-		return fmt.Errorf("unsupported target config version %d", config.Version)
+func validateSyncManifest(manifest SyncManifest) error {
+	if manifest.Version != 2 {
+		return fmt.Errorf("unsupported Sync manifest version %d", manifest.Version)
 	}
-	if err := ValidateRepository(config.Source.Repository); err != nil {
+	if err := ValidateRepository(manifest.Source.Repository); err != nil {
 		return err
 	}
-	if err := ValidateRef(config.Source.Ref); err != nil {
+	if err := ValidateRef(manifest.Source.Ref); err != nil {
 		return err
 	}
 	seenTargets := map[string]string{}
-	for group, files := range config.Files {
+	for group, files := range manifest.Files {
 		if err := validateConfigID(group, "target group"); err != nil {
 			return err
 		}
@@ -328,7 +328,7 @@ func ValidateConfigPath(path string, label string) error {
 	return nil
 }
 
-func ensureTargetGroup(files map[string]map[string]string, group string) map[string]string {
+func ensureSyncGroup(files map[string]map[string]string, group string) map[string]string {
 	if files[group] == nil {
 		files[group] = map[string]string{}
 	}

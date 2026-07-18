@@ -13,8 +13,8 @@ type InitialAdoptionOptions struct {
 	Source                      SourceClient
 	Repository                  string
 	Commit                      string
-	Manifest                    SourceManifest
-	TargetConfig                TargetConfig
+	Contract                    Contract
+	SyncManifest                SyncManifest
 	AdoptExistingManagedTargets bool
 }
 
@@ -24,7 +24,7 @@ func AdoptInitialTargetRepository(opts InitialAdoptionOptions) error {
 
 type initialAdoption struct {
 	opts                     InitialAdoptionOptions
-	prepareTargetConfigWrite func(path string, config TargetConfig) (func() error, func() error, error)
+	prepareTargetConfigWrite func(path string, manifest SyncManifest) (func() error, func() error, error)
 	writeFileBytes           func(target string, data []byte) error
 }
 
@@ -43,8 +43,8 @@ func (a initialAdoption) adopt() error {
 		return errors.New("source client is required")
 	}
 
-	configPath := filepath.Join(root, TargetConfigPath)
-	exists, err := initialAdoptionPathExists(configPath)
+	syncManifestPath := filepath.Join(root, TargetConfigPath)
+	exists, err := initialAdoptionPathExists(syncManifestPath)
 	if err != nil {
 		return err
 	}
@@ -61,11 +61,11 @@ func (a initialAdoption) adopt() error {
 	if prepareTargetConfigWrite == nil {
 		prepareTargetConfigWrite = PrepareTargetConfigWrite
 	}
-	commitTargetConfig, cleanupTargetConfig, err := prepareTargetConfigWrite(configPath, opts.TargetConfig)
+	commitSyncManifest, cleanupSyncManifest, err := prepareTargetConfigWrite(syncManifestPath, opts.SyncManifest)
 	if err != nil {
 		return err
 	}
-	defer cleanupTargetConfig()
+	defer cleanupSyncManifest()
 
 	writeFileBytes := a.writeFileBytes
 	if writeFileBytes == nil {
@@ -76,7 +76,7 @@ func (a initialAdoption) adopt() error {
 			return err
 		}
 	}
-	return commitTargetConfig()
+	return commitSyncManifest()
 }
 
 func (a initialAdoption) collectTemplates(root string) ([]initialAdoptionTemplate, error) {
@@ -87,7 +87,7 @@ func (a initialAdoption) collectTemplates(root string) ([]initialAdoptionTemplat
 
 	missingTemplates := []missingTemplate{}
 	templates := []initialAdoptionTemplate{}
-	for _, entry := range SourceEntries(a.opts.Manifest) {
+	for _, entry := range ContractEntries(a.opts.Contract) {
 		if IsReservedTargetPath(entry.Path) {
 			return nil, fmt.Errorf("reserved target path %q", entry.Path)
 		}

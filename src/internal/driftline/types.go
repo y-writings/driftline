@@ -9,28 +9,28 @@ const (
 	ModeTemplate FileMode = "template"
 )
 
-type SourceManifest struct {
-	Version int                                      `toml:"version"`
-	Files   map[string]map[string]SourceManifestFile `toml:"files"`
+type Contract struct {
+	Version int                                `toml:"version"`
+	Files   map[string]map[string]ContractFile `toml:"files"`
 }
 
-type SourceManifestFile struct {
+type ContractFile struct {
 	Path string   `toml:"path"`
 	Mode FileMode `toml:"mode"`
 }
 
-type TargetConfig struct {
+type SyncManifest struct {
 	Version int                          `toml:"version"`
-	Source  TargetSource                 `toml:"source"`
+	Source  SyncSource                   `toml:"source"`
 	Files   map[string]map[string]string `toml:"files"`
 }
 
-type TargetSource struct {
+type SyncSource struct {
 	Repository string `toml:"repository"`
 	Ref        string `toml:"ref"`
 }
 
-type SourceEntry struct {
+type ContractEntry struct {
 	Group string
 	File  string
 	Key   string
@@ -38,7 +38,7 @@ type SourceEntry struct {
 	Mode  FileMode
 }
 
-type TargetEntry struct {
+type SyncEntry struct {
 	Group string
 	File  string
 	Key   string
@@ -52,8 +52,8 @@ const (
 	StatusAdd                Status = "add"
 	StatusUpdate             Status = "update"
 	StatusRemove             Status = "remove"
-	StatusTargetConfigAdd    Status = "target-config-add"
-	StatusTargetConfigRemove Status = "target-config-remove"
+	StatusSyncManifestAdd    Status = "sync-manifest-add"
+	StatusSyncManifestRemove Status = "sync-manifest-remove"
 	StatusModeTransition     Status = "mode-transition"
 	StatusConflict           Status = "conflict"
 )

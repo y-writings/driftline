@@ -24,8 +24,8 @@ func runInit(source driftline.SourceClient, opts InitOptions, stdout io.Writer) 
 	if !info.IsDir() {
 		return fmt.Errorf("target directory must be a directory: %s", opts.TargetDir)
 	}
-	configPath := filepath.Join(opts.TargetDir, driftline.TargetConfigPath)
-	if _, err := os.Lstat(configPath); err == nil {
+	syncManifestPath := filepath.Join(opts.TargetDir, driftline.TargetConfigPath)
+	if _, err := os.Lstat(syncManifestPath); err == nil {
 		return fmt.Errorf("target config already exists: %s", driftline.TargetConfigPath)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
@@ -49,15 +49,15 @@ func runInit(source driftline.SourceClient, opts InitOptions, stdout io.Writer) 
 			return err
 		}
 	}
-	manifestBytes, err := source.ReadFile(opts.Repository, commit, driftline.SourceManifestPath)
+	contractBytes, err := source.ReadFile(opts.Repository, commit, driftline.SourceManifestPath)
 	if err != nil {
 		return fmt.Errorf(".driftline-source.toml not found in source repository: %w", err)
 	}
-	manifest, err := driftline.LoadSourceManifestBytes(manifestBytes)
+	contract, err := driftline.LoadContractBytes(contractBytes)
 	if err != nil {
 		return err
 	}
-	config, err := driftline.TargetConfigFromSourceManifest(opts.Repository, ref, manifest)
+	syncManifest, err := driftline.SyncManifestFromContract(opts.Repository, ref, contract)
 	if err != nil {
 		return err
 	}
@@ -66,8 +66,8 @@ func runInit(source driftline.SourceClient, opts InitOptions, stdout io.Writer) 
 		Source:                      source,
 		Repository:                  opts.Repository,
 		Commit:                      commit,
-		Manifest:                    manifest,
-		TargetConfig:                config,
+		Contract:                    contract,
+		SyncManifest:                syncManifest,
 		AdoptExistingManagedTargets: opts.Force,
 	}); err != nil {
 		return err
