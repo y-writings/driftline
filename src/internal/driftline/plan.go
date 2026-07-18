@@ -47,8 +47,7 @@ func BuildPlan(opts PlanOptions) (Plan, error) {
 		}
 	}
 
-	syncManifestPath := filepath.Join(opts.TargetDir, TargetConfigPath)
-	syncManifest, err := LoadTargetConfig(syncManifestPath)
+	syncManifest, err := LoadSyncManifest(opts.TargetDir)
 	if err != nil {
 		return Plan{}, err
 	}
@@ -56,9 +55,9 @@ func BuildPlan(opts PlanOptions) (Plan, error) {
 	if err != nil {
 		return Plan{}, err
 	}
-	contractBytes, err := opts.Source.ReadFile(syncManifest.Source.Repository, commit, SourceManifestPath)
+	contractBytes, err := opts.Source.ReadFile(syncManifest.Source.Repository, commit, ContractPath)
 	if err != nil {
-		return Plan{}, fmt.Errorf(".driftline-source.toml not found in source repository: %w", err)
+		return Plan{}, fmt.Errorf("Contract not found: %s: %w", ContractPath, err)
 	}
 	contract, err := LoadContractBytes(contractBytes)
 	if err != nil {
@@ -126,9 +125,6 @@ func (b planBuilder) build() (Plan, error) {
 		if target, ok := syncByKey[entry.Key]; ok {
 			resolved.target = target.Path
 			resolved.declared = true
-		}
-		if IsReservedTargetPath(resolved.target) {
-			return Plan{}, fmt.Errorf("reserved target path %q", resolved.target)
 		}
 		if other, ok := usedTargets[resolved.target]; ok {
 			plan.Changes = append(plan.Changes, conflictChange(resolved, "target already declared by "+other, false))
@@ -357,11 +353,6 @@ func validateForceKey(key string) error {
 		return err
 	}
 	return nil
-}
-
-func IsReservedTargetPath(target string) bool {
-	target = normalizedConfigPath(target)
-	return IsReservedMetadataPath(target) || target == TargetConfigPath || target == removedLockPath
 }
 
 func normalizedConfigPath(path string) string {

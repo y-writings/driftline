@@ -29,7 +29,7 @@ func TestAdoptInitialTargetRepositoryHappyPath(t *testing.T) {
 		t.Fatalf("initial adoption failed: %v", err)
 	}
 
-	manifest, err := LoadTargetConfig(filepath.Join(root, TargetConfigPath))
+	manifest, err := LoadSyncManifest(root)
 	if err != nil {
 		t.Fatalf("Sync manifest should parse: %v", err)
 	}
@@ -67,7 +67,7 @@ func TestAdoptInitialTargetRepositoryDefaultsEmptyRootToWorkingDirectory(t *test
 	if err != nil {
 		t.Fatalf("initial adoption failed: %v", err)
 	}
-	if !initialAdoptionTestPathExists(t, root, TargetConfigPath) {
+	if !initialAdoptionTestPathExists(t, root, SyncManifestPath) {
 		t.Fatal("empty root should write Sync manifest in the working directory")
 	}
 }
@@ -81,7 +81,7 @@ func TestAdoptInitialTargetRepositoryRequiresSource(t *testing.T) {
 
 func TestAdoptInitialTargetRepositoryRejectsExistingSyncManifestBeforeWrites(t *testing.T) {
 	root := t.TempDir()
-	writeInitialAdoptionTestFile(t, root, TargetConfigPath, "existing\n")
+	writeInitialAdoptionTestFile(t, root, SyncManifestPath, "existing\n")
 	source := &fakeInitialAdoptionSource{files: map[string][]byte{
 		"y-writings/source-repo@abc123:templates/missing.txt": []byte("missing template\n"),
 	}}
@@ -94,7 +94,7 @@ func TestAdoptInitialTargetRepositoryRejectsExistingSyncManifestBeforeWrites(t *
 		Contract:     initialAdoptionContract(),
 		SyncManifest: initialAdoptionSyncManifest(),
 	})
-	if err == nil || err.Error() != "target config already exists: .driftline-target.toml" {
+	if err == nil || err.Error() != "Sync manifest already exists: .driftline/sync.toml" {
 		t.Fatalf("expected existing Sync manifest error, got %v", err)
 	}
 	if initialAdoptionTestPathExists(t, root, "templates/missing.txt") {
@@ -183,7 +183,7 @@ func TestAdoptInitialTargetRepositoryRejectsExistingManagedTarget(t *testing.T) 
 			if !tt.wantForceGuidance && hasForceGuidance {
 				t.Fatalf("non-regular managed target must not suggest force adoption, got %v", err)
 			}
-			if initialAdoptionTestPathExists(t, root, TargetConfigPath) {
+			if initialAdoptionTestPathExists(t, root, SyncManifestPath) {
 				t.Fatal("Sync manifest must not be written after managed target conflict")
 			}
 			if initialAdoptionTestPathExists(t, root, "templates/missing.txt") {
@@ -218,7 +218,7 @@ func TestAdoptInitialTargetRepositoryPreflightsAllManagedTargetsBeforeReadingTem
 	if len(source.reads) != 0 {
 		t.Fatalf("source files must not be read before all local preflight passes: %#v", source.reads)
 	}
-	if initialAdoptionTestPathExists(t, root, TargetConfigPath) {
+	if initialAdoptionTestPathExists(t, root, SyncManifestPath) {
 		t.Fatal("Sync manifest must not be written after managed target conflict")
 	}
 	if initialAdoptionTestPathExists(t, root, "templates/missing.txt") {
@@ -255,7 +255,7 @@ func TestAdoptInitialTargetRepositoryForceAdoptsExistingManagedRegularFile(t *te
 	if got := readInitialAdoptionTestFile(t, root, "templates/existing.txt"); got != "target-template\n" {
 		t.Fatalf("existing template should be skipped, got %q", got)
 	}
-	manifest := readInitialAdoptionTestFile(t, root, TargetConfigPath)
+	manifest := readInitialAdoptionTestFile(t, root, SyncManifestPath)
 	if !strings.Contains(manifest, `[files.github-workflow]`) || !strings.Contains(manifest, `ci = ".github/workflows/ci.yaml"`) {
 		t.Fatalf("Sync manifest should record adopted managed target:\n%s", manifest)
 	}
@@ -343,7 +343,7 @@ func TestAdoptInitialTargetRepositoryForceRejectsNonRegularManagedTargets(t *tes
 			if err == nil {
 				t.Fatal("expected non-regular managed target to fail")
 			}
-			if initialAdoptionTestPathExists(t, root, TargetConfigPath) {
+			if initialAdoptionTestPathExists(t, root, SyncManifestPath) {
 				t.Fatal("Sync manifest must not be written after non-regular managed target error")
 			}
 			if initialAdoptionTestPathExists(t, root, "templates/missing.txt") {
@@ -389,7 +389,7 @@ func TestAdoptInitialTargetRepositorySkipsExistingTemplateThroughSymlinkAncestor
 	if got := readInitialAdoptionTestFile(t, outside, "workflows/release.yaml"); got != "target-owned\n" {
 		t.Fatalf("existing template should remain untouched, got %q", got)
 	}
-	if !initialAdoptionTestPathExists(t, root, TargetConfigPath) {
+	if !initialAdoptionTestPathExists(t, root, SyncManifestPath) {
 		t.Fatal("Sync manifest should be written after skipping existing template")
 	}
 }
@@ -423,7 +423,7 @@ func TestAdoptInitialTargetRepositoryRejectsMissingTemplateThroughSymlinkAncesto
 	if len(source.reads) != 0 {
 		t.Fatalf("missing template should fail before source reads: %#v", source.reads)
 	}
-	if initialAdoptionTestPathExists(t, root, TargetConfigPath) {
+	if initialAdoptionTestPathExists(t, root, SyncManifestPath) {
 		t.Fatal("Sync manifest must not be written after symlink ancestor error")
 	}
 }
@@ -436,20 +436,20 @@ func TestAdoptInitialTargetRepositoryRejectsReservedTargetPath(t *testing.T) {
 		{
 			name: "managed",
 			contract: Contract{Version: 2, Files: map[string]map[string]ContractFile{
-				"driftline": {"target": {Path: TargetConfigPath, Mode: ModeManaged}},
+				"driftline": {"target": {Path: SyncManifestPath, Mode: ModeManaged}},
 			}},
 		},
 		{
 			name: "template",
 			contract: Contract{Version: 2, Files: map[string]map[string]ContractFile{
-				"driftline": {"target": {Path: TargetConfigPath, Mode: ModeTemplate}},
+				"driftline": {"target": {Path: SyncManifestPath, Mode: ModeTemplate}},
 			}},
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			root := t.TempDir()
 			source := &fakeInitialAdoptionSource{files: map[string][]byte{
-				"y-writings/source-repo@abc123:" + TargetConfigPath: []byte("reserved\n"),
+				"y-writings/source-repo@abc123:" + SyncManifestPath: []byte("reserved\n"),
 			}}
 
 			err := AdoptInitialTargetRepository(InitialAdoptionOptions{
@@ -460,10 +460,10 @@ func TestAdoptInitialTargetRepositoryRejectsReservedTargetPath(t *testing.T) {
 				Contract:     tt.contract,
 				SyncManifest: initialAdoptionNoFilesSyncManifest(),
 			})
-			if err == nil || !strings.Contains(err.Error(), "reserved target path") {
+			if err == nil || !strings.Contains(err.Error(), "reserved driftline metadata path") {
 				t.Fatalf("expected reserved path error, got %v", err)
 			}
-			if initialAdoptionTestPathExists(t, root, TargetConfigPath) {
+			if initialAdoptionTestPathExists(t, root, SyncManifestPath) {
 				t.Fatal("Sync manifest must not be written after reserved path error")
 			}
 			if len(source.reads) != 0 {
@@ -488,7 +488,7 @@ func TestAdoptInitialTargetRepositoryRejectsMissingTemplateSourceBeforeWrites(t 
 	if err == nil || !strings.Contains(err.Error(), "source template not found in source repository") {
 		t.Fatalf("expected missing template source error, got %v", err)
 	}
-	if initialAdoptionTestPathExists(t, root, TargetConfigPath) {
+	if initialAdoptionTestPathExists(t, root, SyncManifestPath) {
 		t.Fatal("Sync manifest must not be written after missing source template")
 	}
 	if initialAdoptionTestPathExists(t, root, "templates/missing.txt") {
@@ -519,7 +519,7 @@ func TestAdoptInitialTargetRepositoryDoesNotWriteTemplatesWhenSyncManifestPrepar
 	if initialAdoptionTestPathExists(t, root, "templates/missing.txt") {
 		t.Fatal("template file must not be written when Sync manifest prepare fails")
 	}
-	if initialAdoptionTestPathExists(t, root, TargetConfigPath) {
+	if initialAdoptionTestPathExists(t, root, SyncManifestPath) {
 		t.Fatal("Sync manifest must not be committed when prepare fails")
 	}
 }
@@ -551,7 +551,7 @@ func TestInitialAdoptionDoesNotCommitSyncManifestWhenTemplateWriteFails(t *testi
 	if len(writes) != 1 || writes[0] != filepath.Join(root, "templates/missing.txt") {
 		t.Fatalf("unexpected template writes: %#v", writes)
 	}
-	if initialAdoptionTestPathExists(t, root, TargetConfigPath) {
+	if initialAdoptionTestPathExists(t, root, SyncManifestPath) {
 		t.Fatal("Sync manifest must not be committed after template write failure")
 	}
 }
@@ -571,11 +571,12 @@ func TestInitialAdoptionLeavesTemplatesWhenSyncManifestCommitFails(t *testing.T)
 			Contract:     initialAdoptionTemplateOnlyContract(),
 			SyncManifest: initialAdoptionNoFilesSyncManifest(),
 		},
-		prepareTargetConfigWrite: func(path string, manifest SyncManifest) (func() error, func() error, error) {
-			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		prepareSyncManifestCreate: func(root string, manifest SyncManifest) (func() error, func() error, error) {
+			metadataDir := filepath.Join(root, MetadataDirectoryPath)
+			if err := os.MkdirAll(metadataDir, 0o755); err != nil {
 				return nil, nil, err
 			}
-			temp, err := os.CreateTemp(filepath.Dir(path), ".driftline-target-*.toml")
+			temp, err := os.CreateTemp(metadataDir, ".sync-*.toml")
 			if err != nil {
 				return nil, nil, err
 			}
@@ -599,7 +600,7 @@ func TestInitialAdoptionLeavesTemplatesWhenSyncManifestCommitFails(t *testing.T)
 	if got := readInitialAdoptionTestFile(t, root, "templates/missing.txt"); got != "missing template\n" {
 		t.Fatalf("template file should remain after commit failure, got %q", got)
 	}
-	if initialAdoptionTestPathExists(t, root, TargetConfigPath) {
+	if initialAdoptionTestPathExists(t, root, SyncManifestPath) {
 		t.Fatal("Sync manifest path must be missing after commit failure")
 	}
 }

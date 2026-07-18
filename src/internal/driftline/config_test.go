@@ -2,8 +2,6 @@ package driftline
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -137,8 +135,6 @@ func TestLoadSyncManifestRejectsInvalidTOMLModel(t *testing.T) {
 		"invalid group id":         "version = 2\n[source]\nrepository = \"y-writings/source-repo\"\nref = \"main\"\n[files.\"github.workflow\"]\nci = \"ci.yaml\"\n",
 		"invalid file id":          "version = 2\n[source]\nrepository = \"y-writings/source-repo\"\nref = \"main\"\n[files.github-workflow]\n\"bad/id\" = \"ci.yaml\"\n",
 		"invalid target path":      "version = 2\n[source]\nrepository = \"y-writings/source-repo\"\nref = \"main\"\n[files.github-workflow]\nci = \"../ci.yaml\"\n",
-		"reserved target path":     "version = 2\n[source]\nrepository = \"y-writings/source-repo\"\nref = \"main\"\n[files.driftline]\ntarget = \".driftline-target.toml\"\n",
-		"reserved old lock path":   "version = 2\n[source]\nrepository = \"y-writings/source-repo\"\nref = \"main\"\n[files.driftline]\nlock = \"driftline-lock.yaml\"\n",
 		"duplicate target path":    "version = 2\n[source]\nrepository = \"y-writings/source-repo\"\nref = \"main\"\n[files.first]\nci = \"./same.yaml\"\n[files.second]\nci = \"same.yaml\"\n",
 		"old path_overrides shape": "version = 2\n[source]\nrepository = \"y-writings/source-repo\"\nref = \"main\"\n[[files]]\nid = \"ci\"\npath_overrides = { ci = \"custom.yaml\" }\n",
 		"old yaml shape":           "version: 2\nsource:\n  repository: y-writings/source-repo\n",
@@ -206,6 +202,40 @@ file = %q
 `, path)))
 				if err != nil {
 					t.Fatalf("load Sync manifest with ordinary path %q: %v", path, err)
+				}
+			})
+		})
+	}
+}
+
+func TestOldMetadataArtifactNamesAreOrdinaryPaths(t *testing.T) {
+	for _, path := range []string{".driftline-source.toml", ".driftline-target.toml", "driftline-lock.yaml"} {
+		t.Run(path, func(t *testing.T) {
+			for _, mode := range []FileMode{ModeManaged, ModeTemplate} {
+				t.Run("Contract "+string(mode), func(t *testing.T) {
+					_, err := LoadContractBytes([]byte(fmt.Sprintf(`version = 2
+
+[files.ordinary]
+file = { path = %q, mode = %q }
+`, path, mode)))
+					if err != nil {
+						t.Fatalf("load Contract with ordinary old artifact path %q: %v", path, err)
+					}
+				})
+			}
+
+			t.Run("Sync manifest", func(t *testing.T) {
+				_, err := LoadSyncManifestBytes([]byte(fmt.Sprintf(`version = 2
+
+[source]
+repository = "y-writings/source-repo"
+ref = "main"
+
+[files.ordinary]
+file = %q
+`, path)))
+				if err != nil {
+					t.Fatalf("load Sync manifest with ordinary old artifact path %q: %v", path, err)
 				}
 			})
 		})
@@ -308,101 +338,6 @@ release = { path = ".github/workflows/release.yaml", mode = "template" }
 	}
 }
 
-func TestWriteSyncManifestWritesGroupedTOML(t *testing.T) {
-	targetDir := t.TempDir()
-	path := filepath.Join(targetDir, TargetConfigPath)
-	manifest := SyncManifest{
-		Version: 2,
-		Source:  SyncSource{Repository: "y-writings/source-repo", Ref: "main"},
-		Files: map[string]map[string]string{
-			"github-workflow": {"ci": ".github/workflows/project-ci.yaml"},
-		},
-	}
-
-	if err := WriteTargetConfig(path, manifest); err != nil {
-		t.Fatalf("write Sync manifest failed: %v", err)
-	}
-	written, err := LoadTargetConfig(path)
-	if err != nil {
-		t.Fatalf("written Sync manifest should parse: %v", err)
-	}
-	if got := written.Files["github-workflow"]["ci"]; got != ".github/workflows/project-ci.yaml" {
-		t.Fatalf("unexpected round-trip target path: %q", got)
-	}
-	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatalf("stat Sync manifest failed: %v", err)
-	}
-	if got := info.Mode().Perm(); got != 0o644 {
-		t.Fatalf("Sync manifest should be readable, mode=%#o", got)
-	}
-}
-
-func TestPrepareSyncManifestWriteDoesNotReplaceManifestBeforeCommit(t *testing.T) {
-	targetDir := t.TempDir()
-	path := filepath.Join(targetDir, TargetConfigPath)
-	if err := WriteTargetConfig(path, SyncManifest{Version: 2, Source: SyncSource{Repository: "y-writings/old-source", Ref: "main"}}); err != nil {
-		t.Fatalf("write old Sync manifest failed: %v", err)
-	}
-	commit, cleanup, err := PrepareTargetConfigWrite(path, SyncManifest{
-		Version: 2,
-		Source:  SyncSource{Repository: "y-writings/source-repo", Ref: "main"},
-		Files: map[string]map[string]string{
-			"github-workflow": {"ci": ".github/workflows/ci.yaml"},
-		},
-	})
-	if err != nil {
-		t.Fatalf("prepare Sync manifest write failed: %v", err)
-	}
-	defer cleanup()
-	beforeCommit, err := LoadTargetConfig(path)
-	if err != nil {
-		t.Fatalf("old Sync manifest should still parse: %v", err)
-	}
-	if beforeCommit.Source.Repository != "y-writings/old-source" {
-		t.Fatalf("prepare should not replace Sync manifest before commit: %#v", beforeCommit)
-	}
-	if err := commit(); err != nil {
-		t.Fatalf("commit Sync manifest failed: %v", err)
-	}
-	afterCommit, err := LoadTargetConfig(path)
-	if err != nil {
-		t.Fatalf("new Sync manifest should parse: %v", err)
-	}
-	if got := afterCommit.Files["github-workflow"]["ci"]; got != ".github/workflows/ci.yaml" {
-		t.Fatalf("unexpected committed Sync manifest: %#v", afterCommit)
-	}
-}
-
-func TestPrepareSyncManifestWritePreservesExistingFileMode(t *testing.T) {
-	targetDir := t.TempDir()
-	path := filepath.Join(targetDir, TargetConfigPath)
-	if err := os.WriteFile(path, []byte(syncManifestText("y-writings/old-source")), 0o640); err != nil {
-		t.Fatalf("write old Sync manifest failed: %v", err)
-	}
-	if err := os.Chmod(path, 0o640); err != nil {
-		t.Fatalf("chmod old Sync manifest failed: %v", err)
-	}
-	commit, cleanup, err := PrepareTargetConfigWrite(path, SyncManifest{
-		Version: 2,
-		Source:  SyncSource{Repository: "y-writings/source-repo", Ref: "main"},
-	})
-	if err != nil {
-		t.Fatalf("prepare Sync manifest write failed: %v", err)
-	}
-	defer cleanup()
-	if err := commit(); err != nil {
-		t.Fatalf("commit Sync manifest failed: %v", err)
-	}
-	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatalf("stat Sync manifest failed: %v", err)
-	}
-	if got := info.Mode().Perm(); got != 0o640 {
-		t.Fatalf("Sync manifest mode should be preserved, mode=%#o", got)
-	}
-}
-
 func TestValidateConfigPath(t *testing.T) {
 	valid := []string{".github/workflows/ci.yml", "templates/my file.txt", "config/.env.example"}
 	for _, path := range valid {
@@ -417,13 +352,4 @@ func TestValidateConfigPath(t *testing.T) {
 			t.Fatalf("expected labelled validation error for %q, got %v", path, err)
 		}
 	}
-}
-
-func syncManifestText(repository string) string {
-	return `version = 2
-
-[source]
-repository = "` + repository + `"
-ref = "main"
-`
 }

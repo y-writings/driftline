@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"syscall"
 )
 
@@ -23,7 +22,7 @@ func (r TargetRepository) Apply(plan Plan) error {
 
 	var commitSyncManifest func() error
 	if planHasSyncManifestChanges(plan.Changes) {
-		commit, cleanup, err := PrepareTargetConfigWrite(filepath.Join(root, TargetConfigPath), plan.NextSyncManifest)
+		commit, cleanup, err := PrepareSyncManifestRewrite(root, plan.NextSyncManifest)
 		if err != nil {
 			return err
 		}

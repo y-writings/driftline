@@ -1,11 +1,9 @@
 package commands
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 
 	"github.com/y-writings/driftline/src/internal/driftline"
 )
@@ -24,10 +22,7 @@ func runInit(source driftline.SourceClient, opts InitOptions, stdout io.Writer) 
 	if !info.IsDir() {
 		return fmt.Errorf("target directory must be a directory: %s", opts.TargetDir)
 	}
-	syncManifestPath := filepath.Join(opts.TargetDir, driftline.TargetConfigPath)
-	if _, err := os.Lstat(syncManifestPath); err == nil {
-		return fmt.Errorf("target config already exists: %s", driftline.TargetConfigPath)
-	} else if !errors.Is(err, os.ErrNotExist) {
+	if err := driftline.ValidateSyncManifestCreation(opts.TargetDir); err != nil {
 		return err
 	}
 
@@ -49,9 +44,9 @@ func runInit(source driftline.SourceClient, opts InitOptions, stdout io.Writer) 
 			return err
 		}
 	}
-	contractBytes, err := source.ReadFile(opts.Repository, commit, driftline.SourceManifestPath)
+	contractBytes, err := source.ReadFile(opts.Repository, commit, driftline.ContractPath)
 	if err != nil {
-		return fmt.Errorf(".driftline-source.toml not found in source repository: %w", err)
+		return fmt.Errorf("Contract not found: %s: %w", driftline.ContractPath, err)
 	}
 	contract, err := driftline.LoadContractBytes(contractBytes)
 	if err != nil {
@@ -72,6 +67,6 @@ func runInit(source driftline.SourceClient, opts InitOptions, stdout io.Writer) 
 	}); err != nil {
 		return err
 	}
-	fmt.Fprintf(stdout, "created .driftline-target.toml from %s@%s\n", opts.Repository, commit)
+	fmt.Fprintf(stdout, "created Sync manifest %s from %s@%s\n", driftline.SyncManifestPath, opts.Repository, commit)
 	return nil
 }

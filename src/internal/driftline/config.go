@@ -3,8 +3,6 @@ package driftline
 import (
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -14,12 +12,9 @@ import (
 )
 
 const (
-	SourceManifestPath    = ".driftline-source.toml"
-	TargetConfigPath      = ".driftline-target.toml"
 	MetadataDirectoryPath = ".driftline"
 	ContractPath          = MetadataDirectoryPath + "/contract.toml"
 	SyncManifestPath      = MetadataDirectoryPath + "/sync.toml"
-	removedLockPath       = "driftline-lock.yaml"
 )
 
 var idPattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
@@ -36,14 +31,6 @@ func LoadContractBytes(data []byte) (Contract, error) {
 	return contract, validateContract(contract)
 }
 
-func LoadTargetConfig(path string) (SyncManifest, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return SyncManifest{}, fmt.Errorf("read Sync manifest: %w", err)
-	}
-	return LoadSyncManifestBytes(data)
-}
-
 func LoadSyncManifestBytes(data []byte) (SyncManifest, error) {
 	var manifest SyncManifest
 	metadata, err := toml.Decode(string(data), &manifest)
@@ -54,61 +41,6 @@ func LoadSyncManifestBytes(data []byte) (SyncManifest, error) {
 		return manifest, err
 	}
 	return manifest, validateSyncManifest(manifest)
-}
-
-func WriteTargetConfig(path string, manifest SyncManifest) error {
-	commit, cleanup, err := PrepareTargetConfigWrite(path, manifest)
-	if err != nil {
-		return err
-	}
-	defer cleanup()
-	return commit()
-}
-
-func PrepareTargetConfigWrite(path string, manifest SyncManifest) (func() error, func() error, error) {
-	if err := validateSyncManifest(manifest); err != nil {
-		return nil, nil, err
-	}
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return nil, nil, fmt.Errorf("create Sync manifest directory: %w", err)
-	}
-	mode := os.FileMode(0o644)
-	if info, err := os.Stat(path); err == nil {
-		mode = info.Mode().Perm()
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return nil, nil, fmt.Errorf("stat Sync manifest: %w", err)
-	}
-	temp, err := os.CreateTemp(dir, ".driftline-target-*.toml")
-	if err != nil {
-		return nil, nil, fmt.Errorf("create Sync manifest temp file: %w", err)
-	}
-	tempName := temp.Name()
-	cleanup := func() error {
-		err := os.Remove(tempName)
-		if errors.Is(err, os.ErrNotExist) {
-			return nil
-		}
-		return err
-	}
-	if _, err := temp.WriteString(FormatSyncManifest(manifest)); err != nil {
-		temp.Close()
-		cleanup()
-		return nil, nil, fmt.Errorf("write Sync manifest temp file: %w", err)
-	}
-	if err := temp.Chmod(mode); err != nil {
-		temp.Close()
-		cleanup()
-		return nil, nil, fmt.Errorf("chmod Sync manifest temp file: %w", err)
-	}
-	if err := temp.Close(); err != nil {
-		cleanup()
-		return nil, nil, fmt.Errorf("close Sync manifest temp file: %w", err)
-	}
-	commit := func() error {
-		return os.Rename(tempName, path)
-	}
-	return commit, cleanup, nil
 }
 
 func FormatSyncManifest(manifest SyncManifest) string {
@@ -285,9 +217,6 @@ func validateSyncManifest(manifest SyncManifest) error {
 				return err
 			}
 			normalized := normalizedConfigPath(targetPath)
-			if IsReservedTargetPath(normalized) {
-				return fmt.Errorf("reserved target path %q", normalized)
-			}
 			if other, ok := seenTargets[normalized]; ok {
 				return fmt.Errorf("duplicate target path %q for %s and %s", normalized, other, key)
 			}

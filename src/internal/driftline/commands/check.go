@@ -41,7 +41,7 @@ func printChange(w io.Writer, change driftline.Change) {
 	fmt.Fprintln(w, "  source mode: managed")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Choose one:")
-	fmt.Fprintln(w, "  1. set another target path in .driftline-target.toml")
+	fmt.Fprintln(w, "  1. set another target path in .driftline/sync.toml")
 	if change.ForceAllowed {
 		fmt.Fprintln(w, "  2. move the existing target file")
 		fmt.Fprintf(w, "  3. rerun with --force %s to overwrite\n", change.ID)
