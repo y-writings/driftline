@@ -141,6 +141,114 @@ func TestTargetRepositoryApplyDoesNotCreateMissingSyncManifest(t *testing.T) {
 	}
 }
 
+func TestTargetRepositoryApplyRejectsStaleSyncBeforeManagedWrite(t *testing.T) {
+	for _, state := range []string{"removed", "live symlink", "broken symlink"} {
+		t.Run(state, func(t *testing.T) {
+			targetDir := t.TempDir()
+			managedPath := filepath.Join(targetDir, "managed.txt")
+			writeTargetRepositoryTestFile(t, targetDir, SyncManifestPath, syncManifestTOMLForApplyTest(`[files.old]
+config = "old.txt"
+`))
+			writeTargetRepositoryTestFile(t, targetDir, "managed.txt", "target-owned\n")
+			plan := Plan{
+				Changes: []Change{
+					{ID: "old.config", Target: "old.txt", Status: StatusSyncManifestRemove},
+					{ID: "tool.config", Target: "managed.txt", Status: StatusSyncManifestAdd},
+					{ID: "tool.config", Target: "managed.txt", TargetPath: managedPath, SourceBytes: []byte("source\n"), Status: StatusUpdate, WritesTarget: true},
+				},
+				NextSyncManifest: SyncManifest{Version: 2, Source: SyncSource{Repository: "y-writings/source-repo", Ref: "main"}, Files: map[string]map[string]string{"tool": {"config": "managed.txt"}}},
+			}
+
+			manifestPath := filepath.Join(targetDir, SyncManifestPath)
+			if err := os.Remove(manifestPath); err != nil {
+				t.Fatal(err)
+			}
+			outsideTarget := ""
+			switch state {
+			case "live symlink":
+				outsideTarget = filepath.Join(t.TempDir(), "outside-sync.toml")
+				if err := os.WriteFile(outsideTarget, []byte("outside\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(outsideTarget, manifestPath); err != nil {
+					t.Fatal(err)
+				}
+			case "broken symlink":
+				outsideTarget = filepath.Join(t.TempDir(), "missing-sync.toml")
+				if err := os.Symlink(outsideTarget, manifestPath); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			err := (TargetRepository{Root: targetDir}).Apply(plan)
+			wantErr := "Sync manifest path is not a regular file: .driftline/sync.toml"
+			if state == "removed" {
+				wantErr = "Sync manifest not found: .driftline/sync.toml"
+			}
+			if err == nil || err.Error() != wantErr {
+				t.Fatalf("expected stale Sync error %q, got %v", wantErr, err)
+			}
+			if got := readTargetRepositoryTestFile(t, targetDir, "managed.txt"); got != "target-owned\n" {
+				t.Fatalf("Managed file changed before Sync preflight completed: %q", got)
+			}
+			info, statErr := os.Lstat(manifestPath)
+			if state == "removed" {
+				if !os.IsNotExist(statErr) {
+					t.Fatalf("Apply recreated removed Sync manifest: %v", statErr)
+				}
+			} else if statErr != nil || info.Mode()&os.ModeSymlink == 0 {
+				t.Fatalf("Apply replaced stale Sync symlink: info=%v err=%v", info, statErr)
+			}
+			if state == "live symlink" {
+				data, readErr := os.ReadFile(outsideTarget)
+				if readErr != nil || string(data) != "outside\n" {
+					t.Fatalf("Apply wrote through live Sync symlink: data=%q err=%v", data, readErr)
+				}
+			}
+			if state == "broken symlink" {
+				if _, statErr := os.Lstat(outsideTarget); !os.IsNotExist(statErr) {
+					t.Fatalf("Apply wrote through broken Sync symlink: %v", statErr)
+				}
+			}
+		})
+	}
+}
+
+func TestTargetRepositoryApplySyncRewritePreservesContract(t *testing.T) {
+	targetDir := t.TempDir()
+	contractBytes := `# source-owned Contract must remain byte-for-byte stable
+version = 2
+
+[files.tool]
+# local source-side rationale
+config = { path = "managed.txt", mode = "managed" }
+`
+	writeTargetRepositoryTestFile(t, targetDir, ContractPath, contractBytes)
+	writeTargetRepositoryTestFile(t, targetDir, SyncManifestPath, syncManifestTOMLForApplyTest(""))
+	managedPath := filepath.Join(targetDir, "managed.txt")
+	plan := Plan{
+		Changes: []Change{
+			{ID: "tool.config", Target: "managed.txt", Status: StatusSyncManifestAdd},
+			{ID: "tool.config", Target: "managed.txt", TargetPath: managedPath, SourceBytes: []byte("source\n"), Status: StatusAdd, WritesTarget: true},
+		},
+		NextSyncManifest: SyncManifest{Version: 2, Source: SyncSource{Repository: "y-writings/source-repo", Ref: "main"}, Files: map[string]map[string]string{"tool": {"config": "managed.txt"}}},
+	}
+
+	if err := (TargetRepository{Root: targetDir}).Apply(plan); err != nil {
+		t.Fatalf("apply failed: %v", err)
+	}
+	if got := readTargetRepositoryTestFile(t, targetDir, ContractPath); got != contractBytes {
+		t.Fatalf("Sync rewrite changed adjacent Contract bytes:\n%s", got)
+	}
+	if got := readTargetRepositoryTestFile(t, targetDir, "managed.txt"); got != "source\n" {
+		t.Fatalf("Managed file content mismatch: %q", got)
+	}
+	manifest := readTargetRepositoryTestFile(t, targetDir, SyncManifestPath)
+	if !strings.Contains(manifest, `[files.tool]`) || !strings.Contains(manifest, `config = "managed.txt"`) {
+		t.Fatalf("Sync manifest was not rewritten:\n%s", manifest)
+	}
+}
+
 func syncManifestTOMLForApplyTest(files string) string {
 	return `version = 2
 

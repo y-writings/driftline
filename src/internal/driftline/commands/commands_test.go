@@ -190,25 +190,124 @@ func TestInitFailsOnExistingSyncManifestBeforeSourceAccess(t *testing.T) {
 	}
 }
 
-func TestInitFailsOnBrokenSymlinkSyncManifestBeforeSourceAccess(t *testing.T) {
-	targetDir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(targetDir, driftline.MetadataDirectoryPath), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(filepath.Join(t.TempDir(), "missing-sync-manifest"), filepath.Join(targetDir, driftline.SyncManifestPath)); err != nil {
-		t.Fatal(err)
-	}
+func TestInitRejectsUnsafeMetadataDirectoryBeforeSourceAccess(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		setup func(t *testing.T, targetDir string) string
+	}{
+		{
+			name: "regular file",
+			setup: func(t *testing.T, targetDir string) string {
+				writeFile(t, targetDir, driftline.MetadataDirectoryPath, "not a directory\n")
+				return ""
+			},
+		},
+		{
+			name: "live directory symlink",
+			setup: func(t *testing.T, targetDir string) string {
+				outside := t.TempDir()
+				if err := os.Symlink(outside, filepath.Join(targetDir, driftline.MetadataDirectoryPath)); err != nil {
+					t.Fatal(err)
+				}
+				return outside
+			},
+		},
+		{
+			name: "broken symlink",
+			setup: func(t *testing.T, targetDir string) string {
+				outside := filepath.Join(t.TempDir(), "missing-metadata")
+				if err := os.Symlink(outside, filepath.Join(targetDir, driftline.MetadataDirectoryPath)); err != nil {
+					t.Fatal(err)
+				}
+				return outside
+			},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			targetDir := t.TempDir()
+			outside := tt.setup(t, targetDir)
 
-	var stdout, stderr bytes.Buffer
-	err := (Runner{Source: sourceAccessFailingClient{}}).Run([]string{"init", "y-writings/source-repo", "--target-dir", targetDir}, &stdout, &stderr)
-	if err == nil {
-		t.Fatal("expected Sync manifest error before source access")
+			var stdout, stderr bytes.Buffer
+			err := (Runner{Source: sourceAccessFailingClient{}}).Run([]string{"init", "y-writings/source-repo", "--target-dir", targetDir}, &stdout, &stderr)
+			if err == nil || !strings.Contains(err.Error(), "driftline metadata path is not a real directory: .driftline") {
+				t.Fatalf("expected canonical metadata directory error before source access, got %v", err)
+			}
+			if strings.Contains(err.Error(), "source should not be accessed") {
+				t.Fatalf("source was accessed before rejecting metadata directory: %v", err)
+			}
+			for _, oldArtifact := range []string{".driftline-target.toml", ".driftline-source.toml", "driftline-lock.yaml"} {
+				if strings.Contains(err.Error(), oldArtifact) {
+					t.Fatalf("metadata error names old artifact %q: %v", oldArtifact, err)
+				}
+			}
+			if outside != "" {
+				assertFileMissing(t, outside, "sync.toml")
+			}
+		})
 	}
-	if strings.Contains(err.Error(), "source should not be accessed") {
-		t.Fatalf("source was accessed before rejecting existing Sync manifest: %v", err)
-	}
-	if !strings.Contains(err.Error(), "Sync manifest path is not a regular file: .driftline/sync.toml") {
-		t.Fatalf("expected Sync manifest error before source access, got %v", err)
+}
+
+func TestInitRejectsUnsafeMetadataSyncManifestBeforeSourceAccess(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		setup func(t *testing.T, targetDir string) string
+	}{
+		{
+			name: "directory",
+			setup: func(t *testing.T, targetDir string) string {
+				if err := os.Mkdir(filepath.Join(targetDir, driftline.SyncManifestPath), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				return ""
+			},
+		},
+		{
+			name: "live symlink",
+			setup: func(t *testing.T, targetDir string) string {
+				outside := t.TempDir()
+				if err := os.Symlink(outside, filepath.Join(targetDir, driftline.SyncManifestPath)); err != nil {
+					t.Fatal(err)
+				}
+				return filepath.Join(outside, "sync.toml")
+			},
+		},
+		{
+			name: "broken symlink",
+			setup: func(t *testing.T, targetDir string) string {
+				outside := filepath.Join(t.TempDir(), "missing-sync.toml")
+				if err := os.Symlink(outside, filepath.Join(targetDir, driftline.SyncManifestPath)); err != nil {
+					t.Fatal(err)
+				}
+				return outside
+			},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			targetDir := t.TempDir()
+			if err := os.Mkdir(filepath.Join(targetDir, driftline.MetadataDirectoryPath), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			outsideTarget := tt.setup(t, targetDir)
+
+			var stdout, stderr bytes.Buffer
+			err := (Runner{Source: sourceAccessFailingClient{}}).Run([]string{"init", "y-writings/source-repo", "--target-dir", targetDir}, &stdout, &stderr)
+			if err == nil || !strings.Contains(err.Error(), "Sync manifest path is not a regular file: .driftline/sync.toml") {
+				t.Fatalf("expected canonical Sync manifest error before source access, got %v", err)
+			}
+			if strings.Contains(err.Error(), "source should not be accessed") {
+				t.Fatalf("source was accessed before rejecting Sync manifest path: %v", err)
+			}
+			for _, oldArtifact := range []string{".driftline-target.toml", ".driftline-source.toml", "driftline-lock.yaml"} {
+				if strings.Contains(err.Error(), oldArtifact) {
+					t.Fatalf("Sync manifest error names old artifact %q: %v", oldArtifact, err)
+				}
+			}
+			if outsideTarget != "" {
+				if _, err := os.Stat(outsideTarget); !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("outside target must remain absent, stat err=%v", err)
+				}
+			}
+		})
 	}
 }
 

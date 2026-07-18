@@ -53,6 +53,52 @@ func TestAdoptInitialTargetRepositoryHappyPath(t *testing.T) {
 	}
 }
 
+func TestAdoptInitialTargetRepositoryPreservesContract(t *testing.T) {
+	root := t.TempDir()
+	contractBytes := `# source-owned Contract in a dual-role repository
+version = 2
+
+[files.github-workflow]
+# managed source declaration
+ci = { path = ".github/workflows/ci.yaml", mode = "managed" }
+
+[files.templates]
+existing = { path = "templates/existing.txt", mode = "template" }
+`
+	writeInitialAdoptionTestFile(t, root, ContractPath, contractBytes)
+	writeInitialAdoptionTestFile(t, root, "templates/existing.txt", "target-owned\n")
+	source := &fakeInitialAdoptionSource{}
+	contract := Contract{Version: 2, Files: map[string]map[string]ContractFile{
+		"github-workflow": {"ci": {Path: ".github/workflows/ci.yaml", Mode: ModeManaged}},
+		"templates":       {"existing": {Path: "templates/existing.txt", Mode: ModeTemplate}},
+	}}
+
+	err := AdoptInitialTargetRepository(InitialAdoptionOptions{
+		Root:       root,
+		Source:     source,
+		Repository: "y-writings/source-repo",
+		Commit:     "abc123",
+		Contract:   contract,
+		SyncManifest: SyncManifest{
+			Version: 2,
+			Source:  SyncSource{Repository: "y-writings/source-repo", Ref: "main"},
+			Files:   map[string]map[string]string{"github-workflow": {"ci": ".github/workflows/ci.yaml"}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("initial adoption failed: %v", err)
+	}
+	if len(source.reads) != 0 {
+		t.Fatalf("adoption should not read bytes for existing Templates or Managed files: %#v", source.reads)
+	}
+	if got := readInitialAdoptionTestFile(t, root, ContractPath); got != contractBytes {
+		t.Fatalf("initial adoption changed Contract bytes:\n%s", got)
+	}
+	if !initialAdoptionTestPathExists(t, root, SyncManifestPath) {
+		t.Fatal("initial adoption should create Sync manifest beside Contract")
+	}
+}
+
 func TestAdoptInitialTargetRepositoryDefaultsEmptyRootToWorkingDirectory(t *testing.T) {
 	root := t.TempDir()
 	t.Chdir(root)
@@ -102,6 +148,90 @@ func TestAdoptInitialTargetRepositoryRejectsExistingSyncManifestBeforeWrites(t *
 	}
 	if len(source.reads) != 0 {
 		t.Fatalf("source files must not be read after existing Sync manifest error: %#v", source.reads)
+	}
+}
+
+func TestAdoptInitialTargetRepositoryRejectsUnsafeMetadataBeforeReadsOrWrites(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		setup   func(t *testing.T, root string)
+		wantErr string
+	}{
+		{
+			name: "metadata regular file",
+			setup: func(t *testing.T, root string) {
+				metadataTestSetUnsafeMetadata(t, root, "regular file")
+			},
+			wantErr: "driftline metadata path is not a real directory: .driftline",
+		},
+		{
+			name: "metadata live directory symlink",
+			setup: func(t *testing.T, root string) {
+				metadataTestSetUnsafeMetadata(t, root, "live directory symlink")
+			},
+			wantErr: "driftline metadata path is not a real directory: .driftline",
+		},
+		{
+			name: "metadata broken symlink",
+			setup: func(t *testing.T, root string) {
+				metadataTestSetUnsafeMetadata(t, root, "broken symlink")
+			},
+			wantErr: "driftline metadata path is not a real directory: .driftline",
+		},
+		{
+			name: "Sync manifest directory",
+			setup: func(t *testing.T, root string) {
+				metadataTestSetUnsafeSyncManifest(t, root, "directory")
+			},
+			wantErr: "Sync manifest path is not a regular file: .driftline/sync.toml",
+		},
+		{
+			name: "Sync manifest live symlink",
+			setup: func(t *testing.T, root string) {
+				metadataTestSetUnsafeSyncManifest(t, root, "live symlink")
+			},
+			wantErr: "Sync manifest path is not a regular file: .driftline/sync.toml",
+		},
+		{
+			name: "Sync manifest broken symlink",
+			setup: func(t *testing.T, root string) {
+				metadataTestSetUnsafeSyncManifest(t, root, "broken symlink")
+			},
+			wantErr: "Sync manifest path is not a regular file: .driftline/sync.toml",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			tt.setup(t, root)
+			source := &fakeInitialAdoptionSource{files: map[string][]byte{
+				"y-writings/source-repo@abc123:templates/missing.txt": []byte("missing template\n"),
+			}}
+
+			err := AdoptInitialTargetRepository(InitialAdoptionOptions{
+				Root:         root,
+				Source:       source,
+				Repository:   "y-writings/source-repo",
+				Commit:       "abc123",
+				Contract:     initialAdoptionTemplateOnlyContract(),
+				SyncManifest: initialAdoptionNoFilesSyncManifest(),
+			})
+			if err == nil || err.Error() != tt.wantErr {
+				t.Fatalf("expected metadata preflight error %q, got %v", tt.wantErr, err)
+			}
+			if len(source.reads) != 0 {
+				t.Fatalf("unsafe metadata must fail before source reads: %#v", source.reads)
+			}
+			if initialAdoptionTestPathExists(t, root, "templates/missing.txt") {
+				t.Fatal("unsafe metadata must fail before Template writes")
+			}
+			temps, globErr := filepath.Glob(filepath.Join(root, MetadataDirectoryPath, ".sync-*.toml"))
+			if globErr != nil {
+				t.Fatalf("find Sync manifest temp files: %v", globErr)
+			}
+			if len(temps) != 0 {
+				t.Fatalf("unsafe metadata must fail before Sync manifest preparation: %v", temps)
+			}
+		})
 	}
 }
 
