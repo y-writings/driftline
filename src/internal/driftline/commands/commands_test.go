@@ -249,8 +249,9 @@ func TestInitRejectsUnsafeMetadataDirectoryBeforeSourceAccess(t *testing.T) {
 
 func TestInitRejectsUnsafeMetadataSyncManifestBeforeSourceAccess(t *testing.T) {
 	for _, tt := range []struct {
-		name  string
-		setup func(t *testing.T, targetDir string) string
+		name        string
+		setup       func(t *testing.T, targetDir string) string
+		wantOutside string
 	}{
 		{
 			name: "directory",
@@ -264,12 +265,16 @@ func TestInitRejectsUnsafeMetadataSyncManifestBeforeSourceAccess(t *testing.T) {
 		{
 			name: "live symlink",
 			setup: func(t *testing.T, targetDir string) string {
-				outside := t.TempDir()
-				if err := os.Symlink(outside, filepath.Join(targetDir, driftline.SyncManifestPath)); err != nil {
+				outsideTarget := filepath.Join(t.TempDir(), "outside-sync.toml")
+				if err := os.WriteFile(outsideTarget, []byte("outside Sync sentinel\n"), 0o644); err != nil {
 					t.Fatal(err)
 				}
-				return filepath.Join(outside, "sync.toml")
+				if err := os.Symlink(outsideTarget, filepath.Join(targetDir, driftline.SyncManifestPath)); err != nil {
+					t.Fatal(err)
+				}
+				return outsideTarget
 			},
+			wantOutside: "outside Sync sentinel\n",
 		},
 		{
 			name: "broken symlink",
@@ -303,8 +308,13 @@ func TestInitRejectsUnsafeMetadataSyncManifestBeforeSourceAccess(t *testing.T) {
 				}
 			}
 			if outsideTarget != "" {
-				if _, err := os.Stat(outsideTarget); !errors.Is(err, os.ErrNotExist) {
-					t.Fatalf("outside target must remain absent, stat err=%v", err)
+				outsideBytes, err := os.ReadFile(outsideTarget)
+				if tt.wantOutside != "" {
+					if err != nil || string(outsideBytes) != tt.wantOutside {
+						t.Fatalf("outside target changed: got %q, err=%v", outsideBytes, err)
+					}
+				} else if !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("outside target must remain absent, read err=%v", err)
 				}
 			}
 		})
