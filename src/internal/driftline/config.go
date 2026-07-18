@@ -14,9 +14,12 @@ import (
 )
 
 const (
-	SourceManifestPath = ".driftline-source.toml"
-	TargetConfigPath   = ".driftline-target.toml"
-	removedLockPath    = "driftline-lock.yaml"
+	SourceManifestPath    = ".driftline-source.toml"
+	TargetConfigPath      = ".driftline-target.toml"
+	MetadataDirectoryPath = ".driftline"
+	ContractPath          = MetadataDirectoryPath + "/contract.toml"
+	SyncManifestPath      = MetadataDirectoryPath + "/sync.toml"
+	removedLockPath       = "driftline-lock.yaml"
 )
 
 var idPattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
