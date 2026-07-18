@@ -1,6 +1,7 @@
 package driftline
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -82,6 +83,30 @@ func TestLoadContractRejectsInvalidTOMLModel(t *testing.T) {
 	}
 }
 
+func TestLoadContractRejectsReservedMetadataPaths(t *testing.T) {
+	paths := []string{
+		".driftline",
+		".driftline/contract.toml",
+		".driftline/future/file",
+		"./.driftline/future",
+		".driftline/./future",
+	}
+	for _, path := range paths {
+		for _, mode := range []FileMode{ModeManaged, ModeTemplate} {
+			t.Run(fmt.Sprintf("%s/%s", mode, path), func(t *testing.T) {
+				_, err := LoadContractBytes([]byte(fmt.Sprintf(`version = 2
+
+[files.metadata]
+file = { path = %q, mode = %q }
+`, path, mode)))
+				if err == nil || !strings.Contains(err.Error(), path) || !strings.Contains(err.Error(), "reserved driftline metadata path") {
+					t.Fatalf("expected reserved metadata error containing authored path %q, got %v", path, err)
+				}
+			})
+		}
+	}
+}
+
 func TestLoadSyncManifestTOML(t *testing.T) {
 	manifest, err := LoadSyncManifestBytes([]byte(`version = 2
 
@@ -123,6 +148,66 @@ func TestLoadSyncManifestRejectsInvalidTOMLModel(t *testing.T) {
 			if err == nil {
 				t.Fatal("expected validation error")
 			}
+		})
+	}
+}
+
+func TestLoadSyncManifestRejectsReservedMetadataPaths(t *testing.T) {
+	paths := []string{
+		".driftline",
+		".driftline/sync.toml",
+		".driftline/future/file",
+		"./.driftline/future",
+		".driftline/./future",
+	}
+	for _, path := range paths {
+		t.Run(path, func(t *testing.T) {
+			_, err := LoadSyncManifestBytes([]byte(fmt.Sprintf(`version = 2
+
+[source]
+repository = "y-writings/source-repo"
+ref = "main"
+
+[files.metadata]
+file = %q
+`, path)))
+			if err == nil || !strings.Contains(err.Error(), path) || !strings.Contains(err.Error(), "reserved driftline metadata path") {
+				t.Fatalf("expected reserved metadata error containing authored path %q, got %v", path, err)
+			}
+		})
+	}
+}
+
+func TestMetadataNearMissesAreOrdinaryPaths(t *testing.T) {
+	for _, path := range []string{".driftline-file", ".driftliner/file", "nested/.driftline/file"} {
+		t.Run(path, func(t *testing.T) {
+			for _, mode := range []FileMode{ModeManaged, ModeTemplate} {
+				t.Run("Contract "+string(mode), func(t *testing.T) {
+					_, err := LoadContractBytes([]byte(fmt.Sprintf(`version = 2
+
+[files.ordinary]
+file = { path = %q, mode = %q }
+`, path, mode)))
+					if err != nil {
+						t.Fatalf("load Contract with ordinary path %q: %v", path, err)
+					}
+				})
+			}
+
+			t.Run("Sync manifest", func(t *testing.T) {
+				_, err := LoadSyncManifestBytes([]byte(fmt.Sprintf(`version = 2
+
+[source]
+repository = "y-writings/source-repo"
+ref = "main"
+
+[files.ordinary]
+file = %q
+`, path)))
+				if err != nil {
+					t.Fatalf("load Sync manifest with ordinary path %q: %v", path, err)
+				}
+			})
 		})
 	}
 }

@@ -361,7 +361,7 @@ func validateForceKey(key string) error {
 
 func IsReservedTargetPath(target string) bool {
 	target = normalizedConfigPath(target)
-	return target == TargetConfigPath || target == removedLockPath
+	return IsReservedMetadataPath(target) || target == TargetConfigPath || target == removedLockPath
 }
 
 func normalizedConfigPath(path string) string {

@@ -235,6 +235,9 @@ func validateContract(contract Contract) error {
 			if err := ValidateConfigPath(item.Path, fmt.Sprintf("source file %q", key)); err != nil {
 				return err
 			}
+			if err := validateUnreservedMetadataPath(item.Path, fmt.Sprintf("Contract file %q", key)); err != nil {
+				return err
+			}
 			normalized := normalizedConfigPath(item.Path)
 			if other, ok := seenPaths[normalized]; ok {
 				return fmt.Errorf("duplicate source path %q for %s and %s", normalized, other, key)
@@ -276,6 +279,9 @@ func validateSyncManifest(manifest SyncManifest) error {
 				return err
 			}
 			if err := ValidateConfigPath(targetPath, fmt.Sprintf("target file %q", key)); err != nil {
+				return err
+			}
+			if err := validateUnreservedMetadataPath(targetPath, fmt.Sprintf("Sync manifest file %q", key)); err != nil {
 				return err
 			}
 			normalized := normalizedConfigPath(targetPath)
@@ -327,6 +333,18 @@ func ValidateConfigPath(path string, label string) error {
 		if part == "" || part == ".." {
 			return fmt.Errorf("%s path is invalid: %q", label, path)
 		}
+	}
+	return nil
+}
+
+func IsReservedMetadataPath(name string) bool {
+	name = normalizedConfigPath(name)
+	return name == MetadataDirectoryPath || strings.HasPrefix(name, MetadataDirectoryPath+"/")
+}
+
+func validateUnreservedMetadataPath(name string, label string) error {
+	if IsReservedMetadataPath(name) {
+		return fmt.Errorf("%s uses reserved driftline metadata path: %s", label, name)
 	}
 	return nil
 }
