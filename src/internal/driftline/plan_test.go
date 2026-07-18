@@ -1,6 +1,7 @@
 package driftline
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,21 @@ type fakeSourceClient struct {
 	defaultCommit string
 	refs          map[string]string
 	files         map[string][]byte
+	readErr       error
+}
+
+type planSourceAccessFailingClient struct{}
+
+func (planSourceAccessFailingClient) ResolveDefaultRef(repository string) (string, string, error) {
+	return "", "", os.ErrPermission
+}
+
+func (planSourceAccessFailingClient) ResolveRef(repository string, ref string) (string, error) {
+	return "", os.ErrPermission
+}
+
+func (planSourceAccessFailingClient) ReadFile(repository string, commit string, path string) ([]byte, error) {
+	return nil, os.ErrPermission
 }
 
 func (f fakeSourceClient) ResolveDefaultRef(repository string) (string, string, error) {
@@ -27,6 +43,9 @@ func (f fakeSourceClient) ResolveRef(repository string, ref string) (string, err
 }
 
 func (f fakeSourceClient) ReadFile(repository string, commit string, path string) ([]byte, error) {
+	if f.readErr != nil {
+		return nil, f.readErr
+	}
 	data, ok := f.files[repository+"@"+commit+":"+path]
 	if !ok {
 		return nil, os.ErrNotExist
@@ -36,7 +55,7 @@ func (f fakeSourceClient) ReadFile(repository string, commit string, path string
 
 func TestBuildPlanAddsMissingManagedEntryAndTargetFile(t *testing.T) {
 	targetDir := t.TempDir()
-	writePlanFile(t, targetDir, TargetConfigPath, targetConfigTOML(""))
+	writePlanFile(t, targetDir, SyncManifestPath, syncManifestTOML(""))
 	client := newPlanSourceClient(`version = 2
 
 [files.github-workflow]
@@ -48,19 +67,66 @@ ci = { path = ".github/workflows/ci.yaml", mode = "managed" }
 		t.Fatalf("build plan failed: %v", err)
 	}
 
-	assertPlanHasChange(t, plan, StatusTargetConfigAdd, "github-workflow.ci", "add target config entry")
+	assertPlanHasChange(t, plan, StatusSyncManifestAdd, "github-workflow.ci", "add Sync manifest entry")
 	change := planChange(t, plan, StatusAdd, "github-workflow.ci")
 	if !change.WritesTarget || change.Target != ".github/workflows/ci.yaml" || string(change.SourceBytes) != "ci\n" {
 		t.Fatalf("unexpected add change: %#v", change)
 	}
-	if got := plan.NextConfig.Files["github-workflow"]["ci"]; got != ".github/workflows/ci.yaml" {
-		t.Fatalf("missing next target config entry: %#v", plan.NextConfig.Files)
+	if got := plan.NextSyncManifest.Files["github-workflow"]["ci"]; got != ".github/workflows/ci.yaml" {
+		t.Fatalf("missing next Sync manifest entry: %#v", plan.NextSyncManifest.Files)
+	}
+}
+
+func TestBuildPlanDoesNotReadOldRootSyncManifest(t *testing.T) {
+	targetDir := t.TempDir()
+	writePlanFile(t, targetDir, ".driftline-target.toml", syncManifestTOML(""))
+
+	_, err := BuildPlan(PlanOptions{TargetDir: targetDir, Source: planSourceAccessFailingClient{}})
+	if err == nil || !strings.Contains(err.Error(), "Sync manifest not found: .driftline/sync.toml") {
+		t.Fatalf("expected canonical Sync manifest error before source access, got %v", err)
+	}
+}
+
+func TestBuildPlanClassifiesContractReadErrors(t *testing.T) {
+	providerErr := errors.New("provider unavailable")
+	for _, tt := range []struct {
+		name       string
+		readErr    error
+		wantPrefix string
+	}{
+		{
+			name:       "not found",
+			readErr:    os.ErrNotExist,
+			wantPrefix: "Contract not found: .driftline/contract.toml: ",
+		},
+		{
+			name:       "provider failure",
+			readErr:    providerErr,
+			wantPrefix: "read Contract .driftline/contract.toml: ",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			targetDir := t.TempDir()
+			writePlanFile(t, targetDir, SyncManifestPath, syncManifestTOML(""))
+			client := fakeSourceClient{
+				refs:    map[string]string{"y-writings/source-repo@main": "0123456789abcdef0123456789abcdef01234567"},
+				readErr: tt.readErr,
+			}
+
+			_, err := BuildPlan(PlanOptions{TargetDir: targetDir, Source: client})
+			if err == nil || !strings.HasPrefix(err.Error(), tt.wantPrefix) {
+				t.Fatalf("expected %q error, got %v", tt.wantPrefix, err)
+			}
+			if !errors.Is(err, tt.readErr) {
+				t.Fatalf("Contract read error should preserve cause %v: %v", tt.readErr, err)
+			}
+		})
 	}
 }
 
 func TestBuildPlanUpdatesDeclaredManagedTarget(t *testing.T) {
 	targetDir := t.TempDir()
-	writePlanFile(t, targetDir, TargetConfigPath, targetConfigTOML(`[files.github-workflow]
+	writePlanFile(t, targetDir, SyncManifestPath, syncManifestTOML(`[files.github-workflow]
 ci = ".github/workflows/project-ci.yaml"
 `))
 	writePlanFile(t, targetDir, ".github/workflows/project-ci.yaml", "old\n")
@@ -79,12 +145,12 @@ ci = { path = ".github/workflows/ci.yaml", mode = "managed" }
 	if !change.WritesTarget || change.Target != ".github/workflows/project-ci.yaml" || string(change.SourceBytes) != "new\n" {
 		t.Fatalf("unexpected update change: %#v", change)
 	}
-	assertPlanDoesNotHaveChange(t, plan, StatusTargetConfigAdd, "github-workflow.ci")
+	assertPlanDoesNotHaveChange(t, plan, StatusSyncManifestAdd, "github-workflow.ci")
 }
 
 func TestBuildPlanRemovesManagedFileAbsentFromSource(t *testing.T) {
 	targetDir := t.TempDir()
-	writePlanFile(t, targetDir, TargetConfigPath, targetConfigTOML(`[files.github-workflow]
+	writePlanFile(t, targetDir, SyncManifestPath, syncManifestTOML(`[files.github-workflow]
 ci = ".github/workflows/ci.yaml"
 `))
 	writePlanFile(t, targetDir, ".github/workflows/ci.yaml", "old\n")
@@ -100,15 +166,16 @@ ci = ".github/workflows/ci.yaml"
 	if !remove.DeletesTarget || remove.Target != ".github/workflows/ci.yaml" {
 		t.Fatalf("unexpected remove change: %#v", remove)
 	}
-	assertPlanHasChange(t, plan, StatusTargetConfigRemove, "github-workflow.ci", "remove target config entry")
-	if _, ok := plan.NextConfig.Files["github-workflow"]; ok {
-		t.Fatalf("empty group should be removed from next config: %#v", plan.NextConfig.Files)
+	assertPlanHasChange(t, plan, StatusSyncManifestRemove, "github-workflow.ci", "remove Sync manifest entry")
+	assertPlanHasChange(t, plan, StatusRemove, "github-workflow.ci", "managed file removed from Contract")
+	if _, ok := plan.NextSyncManifest.Files["github-workflow"]; ok {
+		t.Fatalf("empty group should be removed from next Sync manifest: %#v", plan.NextSyncManifest.Files)
 	}
 }
 
-func TestBuildPlanManagedToTemplateRemovesConfigAndLeavesTargetFile(t *testing.T) {
+func TestBuildPlanManagedToTemplateRemovesSyncManifestEntryAndLeavesTargetFile(t *testing.T) {
 	targetDir := t.TempDir()
-	writePlanFile(t, targetDir, TargetConfigPath, targetConfigTOML(`[files.github-workflow]
+	writePlanFile(t, targetDir, SyncManifestPath, syncManifestTOML(`[files.github-workflow]
 release = ".github/workflows/release.yaml"
 `))
 	writePlanFile(t, targetDir, ".github/workflows/release.yaml", "target-owned\n")
@@ -127,13 +194,13 @@ release = { path = ".github/workflows/release.yaml", mode = "template" }
 	if transition.DeletesTarget || transition.WritesTarget {
 		t.Fatalf("managed-to-template must leave target file untouched: %#v", transition)
 	}
-	assertPlanHasChange(t, plan, StatusTargetConfigRemove, "github-workflow.release", "remove target config entry")
+	assertPlanHasChange(t, plan, StatusSyncManifestRemove, "github-workflow.release", "remove Sync manifest entry")
 	assertPlanDoesNotHaveChange(t, plan, StatusRemove, "github-workflow.release")
 }
 
 func TestBuildPlanTemplateToManagedConflictsWhenTargetExists(t *testing.T) {
 	targetDir := t.TempDir()
-	writePlanFile(t, targetDir, TargetConfigPath, targetConfigTOML(""))
+	writePlanFile(t, targetDir, SyncManifestPath, syncManifestTOML(""))
 	writePlanFile(t, targetDir, ".github/workflows/ci.yaml", "target-owned\n")
 	client := newPlanSourceClient(`version = 2
 
@@ -157,7 +224,7 @@ ci = { path = ".github/workflows/ci.yaml", mode = "managed" }
 
 func TestBuildPlanForceAllowsOneManagedOverwrite(t *testing.T) {
 	targetDir := t.TempDir()
-	writePlanFile(t, targetDir, TargetConfigPath, targetConfigTOML(""))
+	writePlanFile(t, targetDir, SyncManifestPath, syncManifestTOML(""))
 	writePlanFile(t, targetDir, ".github/workflows/ci.yaml", "target-owned\n")
 	client := newPlanSourceClient(`version = 2
 
@@ -176,12 +243,12 @@ ci = { path = ".github/workflows/ci.yaml", mode = "managed" }
 	if !change.WritesTarget || string(change.SourceBytes) != "source\n" {
 		t.Fatalf("unexpected forced update change: %#v", change)
 	}
-	assertPlanHasChange(t, plan, StatusTargetConfigAdd, "github-workflow.ci", "add target config entry")
+	assertPlanHasChange(t, plan, StatusSyncManifestAdd, "github-workflow.ci", "add Sync manifest entry")
 }
 
 func TestBuildPlanConflictsWhenNewManagedKeyReusesExistingStaleTarget(t *testing.T) {
 	targetDir := t.TempDir()
-	writePlanFile(t, targetDir, TargetConfigPath, targetConfigTOML(`[files.old]
+	writePlanFile(t, targetDir, SyncManifestPath, syncManifestTOML(`[files.old]
 config = "same.txt"
 `))
 	writePlanFile(t, targetDir, "same.txt", "old\n")
@@ -202,9 +269,9 @@ config = { path = "same.txt", mode = "managed" }
 	assertPlanDoesNotHaveChange(t, plan, StatusUpdate, "new.config")
 }
 
-func TestBuildPlanForceMovesStaleTargetConfigPathToNewManagedKey(t *testing.T) {
+func TestBuildPlanForceMovesStaleSyncManifestPathToNewManagedKey(t *testing.T) {
 	targetDir := t.TempDir()
-	writePlanFile(t, targetDir, TargetConfigPath, targetConfigTOML(`[files.old]
+	writePlanFile(t, targetDir, SyncManifestPath, syncManifestTOML(`[files.old]
 config = "same.txt"
 `))
 	writePlanFile(t, targetDir, "same.txt", "old\n")
@@ -225,14 +292,14 @@ config = { path = "same.txt", mode = "managed" }
 	if !change.WritesTarget || change.Target != "same.txt" {
 		t.Fatalf("new managed key should update reused target path: %#v", change)
 	}
-	assertPlanHasChange(t, plan, StatusTargetConfigAdd, "new.config", "add target config entry")
-	assertPlanHasChange(t, plan, StatusTargetConfigRemove, "old.config", "remove target config entry")
+	assertPlanHasChange(t, plan, StatusSyncManifestAdd, "new.config", "add Sync manifest entry")
+	assertPlanHasChange(t, plan, StatusSyncManifestRemove, "old.config", "remove Sync manifest entry")
 	assertPlanDoesNotHaveChange(t, plan, StatusRemove, "old.config")
 }
 
 func TestBuildPlanAllowsReplacingStaleManagedFileWithDirectoryChild(t *testing.T) {
 	targetDir := t.TempDir()
-	writePlanFile(t, targetDir, TargetConfigPath, targetConfigTOML(`[files.old]
+	writePlanFile(t, targetDir, SyncManifestPath, syncManifestTOML(`[files.old]
 config = "dir"
 `))
 	writePlanFile(t, targetDir, "dir", "old\n")
@@ -255,13 +322,13 @@ config = { path = "dir/file", mode = "managed" }
 	if !add.WritesTarget || add.Target != "dir/file" || string(add.SourceBytes) != "new\n" {
 		t.Fatalf("unexpected child add: %#v", add)
 	}
-	assertPlanHasChange(t, plan, StatusTargetConfigAdd, "new.config", "add target config entry")
-	assertPlanHasChange(t, plan, StatusTargetConfigRemove, "old.config", "remove target config entry")
+	assertPlanHasChange(t, plan, StatusSyncManifestAdd, "new.config", "add Sync manifest entry")
+	assertPlanHasChange(t, plan, StatusSyncManifestRemove, "old.config", "remove Sync manifest entry")
 }
 
 func TestBuildPlanConflictsWhenNewManagedParentReusesStaleChildDirectory(t *testing.T) {
 	targetDir := t.TempDir()
-	writePlanFile(t, targetDir, TargetConfigPath, targetConfigTOML(`[files.old]
+	writePlanFile(t, targetDir, SyncManifestPath, syncManifestTOML(`[files.old]
 config = "dir/file"
 `))
 	writePlanFile(t, targetDir, "dir/file", "old\n")
@@ -284,12 +351,12 @@ config = { path = "dir", mode = "managed" }
 	if !remove.DeletesTarget || remove.Target != "dir/file" {
 		t.Fatalf("unexpected stale child removal: %#v", remove)
 	}
-	assertPlanHasChange(t, plan, StatusTargetConfigRemove, "old.config", "remove target config entry")
+	assertPlanHasChange(t, plan, StatusSyncManifestRemove, "old.config", "remove Sync manifest entry")
 }
 
 func TestBuildPlanConflictsWhenNewManagedChildIsBlockedByTargetOwnedFile(t *testing.T) {
 	targetDir := t.TempDir()
-	writePlanFile(t, targetDir, TargetConfigPath, targetConfigTOML(""))
+	writePlanFile(t, targetDir, SyncManifestPath, syncManifestTOML(""))
 	writePlanFile(t, targetDir, "config", "target-owned\n")
 	client := newPlanSourceClient(`version = 2
 
@@ -311,7 +378,7 @@ config = { path = "config/tool.toml", mode = "managed" }
 
 func TestBuildPlanConflictsWhenDeclaredManagedChildIsBlockedByTargetOwnedFile(t *testing.T) {
 	targetDir := t.TempDir()
-	writePlanFile(t, targetDir, TargetConfigPath, targetConfigTOML(`[files.tool]
+	writePlanFile(t, targetDir, SyncManifestPath, syncManifestTOML(`[files.tool]
 config = "config/tool.toml"
 `))
 	writePlanFile(t, targetDir, "config", "target-owned\n")
@@ -336,7 +403,7 @@ config = { path = "config/tool.toml", mode = "managed" }
 
 func TestBuildPlanConflictsWhenStaleChildProbeIsBlockedByTargetOwnedFile(t *testing.T) {
 	targetDir := t.TempDir()
-	writePlanFile(t, targetDir, TargetConfigPath, targetConfigTOML(`[files.old]
+	writePlanFile(t, targetDir, SyncManifestPath, syncManifestTOML(`[files.old]
 config = "config/old"
 `))
 	writePlanFile(t, targetDir, "config", "target-owned\n")
@@ -359,13 +426,12 @@ config = { path = "config/old/tool.toml", mode = "managed" }
 	if !remove.DeletesTarget || remove.Target != "config/old" {
 		t.Fatalf("unexpected stale removal: %#v", remove)
 	}
-	assertPlanHasChange(t, plan, StatusTargetConfigRemove, "old.config", "remove target config entry")
+	assertPlanHasChange(t, plan, StatusSyncManifestRemove, "old.config", "remove Sync manifest entry")
 }
 
-func TestBuildPlanIgnoresTemplateAndOldLockFilesDuringUpdate(t *testing.T) {
+func TestBuildPlanIgnoresTemplateFilesDuringUpdate(t *testing.T) {
 	targetDir := t.TempDir()
-	writePlanFile(t, targetDir, TargetConfigPath, targetConfigTOML(""))
-	writePlanFile(t, targetDir, "driftline-lock.yaml", "not: valid: yaml\n")
+	writePlanFile(t, targetDir, SyncManifestPath, syncManifestTOML(""))
 	client := newPlanSourceClient(`version = 2
 
 [files.mise]
@@ -374,7 +440,7 @@ config = { path = ".mise/config.toml", mode = "template" }
 
 	plan, err := BuildPlan(PlanOptions{TargetDir: targetDir, Source: client})
 	if err != nil {
-		t.Fatalf("build plan should ignore template and lock files: %v", err)
+		t.Fatalf("build plan should ignore template files: %v", err)
 	}
 	if HasDrift(plan.Changes) {
 		t.Fatalf("new templates are not applied during update: %#v", plan.Changes)
@@ -383,7 +449,7 @@ config = { path = ".mise/config.toml", mode = "template" }
 
 func TestBuildPlanConflictsWhenNewManagedDefaultTargetIsAlreadyDeclared(t *testing.T) {
 	targetDir := t.TempDir()
-	writePlanFile(t, targetDir, TargetConfigPath, targetConfigTOML(`[files.existing]
+	writePlanFile(t, targetDir, SyncManifestPath, syncManifestTOML(`[files.existing]
 config = "same.txt"
 `))
 	client := newPlanSourceClient(`version = 2
@@ -411,7 +477,7 @@ config = { path = "same.txt", mode = "managed" }
 func TestBuildPlanConflictsWhenManagedTargetPathsOverlap(t *testing.T) {
 	tests := []struct {
 		name       string
-		manifest   string
+		contract   string
 		targets    string
 		conflictID string
 		target     string
@@ -419,7 +485,7 @@ func TestBuildPlanConflictsWhenManagedTargetPathsOverlap(t *testing.T) {
 	}{
 		{
 			name: "parent path before child path",
-			manifest: `version = 2
+			contract: `version = 2
 
 [files.a]
 parent = { path = "source-parent.txt", mode = "managed" }
@@ -439,7 +505,7 @@ child = "dir/file"
 		},
 		{
 			name: "child path before parent path",
-			manifest: `version = 2
+			contract: `version = 2
 
 [files.a]
 child = { path = "source-child.txt", mode = "managed" }
@@ -462,8 +528,8 @@ parent = "dir"
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			targetDir := t.TempDir()
-			writePlanFile(t, targetDir, TargetConfigPath, targetConfigTOML(tt.targets))
-			client := newPlanSourceClient(tt.manifest, map[string]string{
+			writePlanFile(t, targetDir, SyncManifestPath, syncManifestTOML(tt.targets))
+			client := newPlanSourceClient(tt.contract, map[string]string{
 				"source-parent.txt": "parent\n",
 				"source-child.txt":  "child\n",
 			})
@@ -485,7 +551,7 @@ parent = "dir"
 	}
 }
 
-func targetConfigTOML(files string) string {
+func syncManifestTOML(files string) string {
 	return `version = 2
 
 [source]
@@ -494,12 +560,12 @@ ref = "main"
 ` + files
 }
 
-func newPlanSourceClient(sourceManifest string, files map[string]string) fakeSourceClient {
+func newPlanSourceClient(contract string, files map[string]string) fakeSourceClient {
 	commit := "0123456789abcdef0123456789abcdef01234567"
 	client := fakeSourceClient{
 		refs: map[string]string{"y-writings/source-repo@main": commit},
 		files: map[string][]byte{
-			"y-writings/source-repo@" + commit + ":" + SourceManifestPath: []byte(sourceManifest),
+			"y-writings/source-repo@" + commit + ":" + ContractPath: []byte(contract),
 		},
 	}
 	for path, content := range files {

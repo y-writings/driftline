@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 
 	"github.com/y-writings/driftline/src/internal/driftline"
 )
@@ -24,10 +23,7 @@ func runInit(source driftline.SourceClient, opts InitOptions, stdout io.Writer) 
 	if !info.IsDir() {
 		return fmt.Errorf("target directory must be a directory: %s", opts.TargetDir)
 	}
-	configPath := filepath.Join(opts.TargetDir, driftline.TargetConfigPath)
-	if _, err := os.Lstat(configPath); err == nil {
-		return fmt.Errorf("target config already exists: %s", driftline.TargetConfigPath)
-	} else if !errors.Is(err, os.ErrNotExist) {
+	if err := driftline.ValidateSyncManifestCreation(opts.TargetDir); err != nil {
 		return err
 	}
 
@@ -49,15 +45,18 @@ func runInit(source driftline.SourceClient, opts InitOptions, stdout io.Writer) 
 			return err
 		}
 	}
-	manifestBytes, err := source.ReadFile(opts.Repository, commit, driftline.SourceManifestPath)
+	contractBytes, err := source.ReadFile(opts.Repository, commit, driftline.ContractPath)
 	if err != nil {
-		return fmt.Errorf(".driftline-source.toml not found in source repository: %w", err)
+		if errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("Contract not found: %s: %w", driftline.ContractPath, err)
+		}
+		return fmt.Errorf("read Contract %s: %w", driftline.ContractPath, err)
 	}
-	manifest, err := driftline.LoadSourceManifestBytes(manifestBytes)
+	contract, err := driftline.LoadContractBytes(contractBytes)
 	if err != nil {
 		return err
 	}
-	config, err := driftline.TargetConfigFromSourceManifest(opts.Repository, ref, manifest)
+	syncManifest, err := driftline.SyncManifestFromContract(opts.Repository, ref, contract)
 	if err != nil {
 		return err
 	}
@@ -66,12 +65,12 @@ func runInit(source driftline.SourceClient, opts InitOptions, stdout io.Writer) 
 		Source:                      source,
 		Repository:                  opts.Repository,
 		Commit:                      commit,
-		Manifest:                    manifest,
-		TargetConfig:                config,
+		Contract:                    contract,
+		SyncManifest:                syncManifest,
 		AdoptExistingManagedTargets: opts.Force,
 	}); err != nil {
 		return err
 	}
-	fmt.Fprintf(stdout, "created .driftline-target.toml from %s@%s\n", opts.Repository, commit)
+	fmt.Fprintf(stdout, "created Sync manifest %s from %s@%s\n", driftline.SyncManifestPath, opts.Repository, commit)
 	return nil
 }

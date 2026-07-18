@@ -1,5 +1,7 @@
 # TOML Managed/Template Sync Design
 
+<!-- markdownlint-disable MD013 -->
+
 ## Status
 
 This document is the canonical design for the next driftline configuration redesign.
@@ -12,7 +14,7 @@ Historical design documents, plans, README examples, schemas, tests, and fixture
 
 Make driftline a source-to-target file sync tool with a small, readable TOML configuration model.
 
-The source repository defines the file contract. The target repository defines target placement for actively managed files. Template files are initial placement aids and are not tracked in the target manifest after creation.
+The Source Repository defines the Contract. The Target Repository defines target placement for actively Managed files. Template files are initial placement aids and are not tracked in the Sync manifest after creation.
 
 ## Non-Negotiable Constraints
 
@@ -29,16 +31,16 @@ The source repository defines the file contract. The target repository defines t
 
 driftline synchronizes files from a source repository into a target repository.
 
-driftline does not act as a package manager and does not retain historical ownership state. Current source config plus current Target manifest define the desired managed set.
+driftline does not act as a package manager and does not retain historical ownership state. The current Contract plus current Sync manifest define the desired Managed set.
 
-Source config owns:
+The Contract owns:
 
 - group identifiers,
 - file identifiers,
 - source paths,
 - file mode: `managed` or `template`.
 
-Target manifest owns:
+The Sync manifest owns:
 
 - source repository and ref,
 - target paths for currently managed files only.
@@ -50,13 +52,14 @@ Target manifest owns:
 - File key: `<group>.<file>`, for example `github-workflow.ci`.
 - Managed file: a source-controlled file that driftline keeps synchronized.
 - Template file: a source-provided initial file that becomes a normal target-owned file after creation.
-- Target manifest: `.driftline-target.toml`.
+- Contract: `.driftline/contract.toml`, the Source Repository's ref-scoped file declaration.
+- Sync manifest: `.driftline/sync.toml`, the Target Repository's current Managed file mapping.
 
 Group IDs and file IDs must be restricted to TOML bare-key-friendly names: letters, numbers, `_`, and `-`. Do not allow dots, slashes, whitespace, or quoted-key-only identifiers.
 
-## Source Config
+## Contract
 
-The source repository owns `.driftline-source.toml` at its repository root.
+The Source Repository owns `.driftline/contract.toml`.
 
 Canonical shape:
 
@@ -73,7 +76,7 @@ config = { path = ".mise/config.toml", mode = "template" }
 
 Rules:
 
-- Source config is parsed as TOML 1.1.
+- The Contract is parsed as TOML 1.1.
 - `version = 2` is required.
 - `[files.<group>]` groups related files for readability.
 - Each entry under `[files.<group>]` is one file keyed by stable file ID.
@@ -84,9 +87,9 @@ Rules:
 - Duplicate normalized source paths are invalid.
 - Root `gitignore` behavior from the old YAML design is removed. If a source repository needs to provide `.gitignore`, define it as a normal managed or template file.
 
-## Target Manifest
+## Sync Manifest
 
-The target repository owns `.driftline-target.toml` at its repository root.
+The Target Repository owns `.driftline/sync.toml`.
 
 Canonical shape:
 
@@ -103,18 +106,18 @@ ci = ".github/workflows/project-ci.yaml"
 
 Rules:
 
-- Target manifest is parsed as TOML 1.1.
+- The Sync manifest is parsed as TOML 1.1.
 - `version = 2` is required.
 - `[source]` is required.
 - `source.repository` is required and uses `owner/repo` form.
 - `source.ref` is required.
-- `[files.<group>]` contains managed files only.
-- Each file value is the target repository path for that managed file.
-- Template files are not recorded in the Target manifest.
+- `[files.<group>]` contains Managed files only.
+- Each file value is the Target Repository path for that Managed file.
+- Template files are not recorded in the Sync manifest.
 - Unknown fields are invalid.
 - Duplicate normalized target paths are invalid.
 
-`.driftline-target.toml` is both human-editable and driftline-updatable. `driftline update` may rewrite it to add entries for newly managed files, remove entries for no-longer-managed files, and remove entries for files that changed from managed to template.
+`.driftline/sync.toml` is both human-editable and driftline-updatable. `driftline update` may rewrite it to add entries for newly Managed files, remove entries for no-longer-Managed files, and remove entries for files that changed from Managed to Template.
 
 ## Path Validation
 
@@ -130,29 +133,31 @@ Invalid paths include:
 - paths ending in `/`,
 - `.`.
 
+The complete `.driftline/` subtree is reserved for driftline metadata. A Managed or Template source or target path must not equal `.driftline` or start with `.driftline/`.
+
 ## Mode Semantics
 
 ### Managed
 
 Managed files are source-controlled.
 
-For an active managed file:
+For an active Managed file:
 
-- If the Target manifest has a target path, sync source bytes to that path.
-- If the Target manifest is missing the file key, add it with the default target path equal to the source path.
+- If the Sync manifest has a target path, sync source bytes to that path.
+- If the Sync manifest is missing the File key, add it with the default target path equal to the source path.
 - If the chosen target path does not exist, create it.
-- If the chosen target path exists and is not already in the Target manifest for that file key, report a conflict instead of overwriting.
+- If the chosen target path exists and is not already in the Sync manifest for that File key, report a conflict instead of overwriting.
 - If source content differs from the target file, update the target file.
 
-When a managed file is removed from source config:
+When a Managed file is removed from the Contract:
 
-- Remove its Target manifest entry.
-- Delete its target file using the target path currently declared in the Target manifest.
-- Remove an empty `[files.<group>]` table from the Target manifest.
+- Remove its Sync manifest entry.
+- Delete its target file using the target path currently declared in the Sync manifest.
+- Remove an empty `[files.<group>]` table from the Sync manifest.
 
-When a file changes from `managed` to `template` in source config:
+When a file changes from `managed` to `template` in the Contract:
 
-- Remove its Target manifest entry.
+- Remove its Sync manifest entry.
 - Leave the target file untouched.
 - Treat the target file as target-owned from that point forward.
 
@@ -163,9 +168,9 @@ Template files are source-provided initial files. They are not ongoing sync targ
 For a template file:
 
 - Create it only during initial template placement when the target path is missing.
-- Do not record it in the Target manifest.
+- Do not record it in the Sync manifest.
 - Do not update it after creation.
-- Do not delete it when source config removes it.
+- Do not delete it when the Contract removes it.
 - If a template path already exists, skip it without modifying the file.
 
 Template placement is part of initial adoption. Normal `update` must not silently add newly introduced templates to an existing target repository.
@@ -174,38 +179,38 @@ Template placement is part of initial adoption. Normal `update` must not silentl
 
 ### init
 
-`driftline init <owner/repo>` reads `.driftline-source.toml` from the source repository and creates `.driftline-target.toml` in the target repository.
+`driftline init <owner/repo>` reads `.driftline/contract.toml` from the Source Repository and creates `.driftline/sync.toml` in the Target Repository.
 
 `init` behavior:
 
-- Write Target manifest entries for source files with `mode = "managed"`.
+- Write Sync manifest entries for Contract files with `mode = "managed"`.
 - Use the source path as the default target path for each managed file.
 - Place template files at their source paths only if the target path is missing.
 - Skip template files whose target path already exists.
-- Do not record template files in the Target manifest.
-- Fail before writing if the Target manifest already exists.
+- Do not record Template files in the Sync manifest.
+- Fail before writing if the Sync manifest already exists.
 - Fail before writing when a managed default target path already exists, unless `--force` is provided.
-- With `--force`, adopt existing regular files at Managed file target paths into the Target manifest without overwriting or comparing content.
-- With `--force`, still reject an existing Target manifest, directories, symlinks, broken symlinks, parent path collisions, and reserved target paths.
+- With `--force`, adopt existing regular files at Managed file target paths into the Sync manifest without overwriting or comparing content.
+- With `--force`, still reject an existing Sync manifest, directories, symlinks, broken symlinks, parent path collisions, and reserved target paths.
 - Without `--force`, advertise force only for existing regular files at Managed file target paths that force can adopt.
 
 ### check
 
-`driftline check` builds the same plan as `update` and reports changes without writing files or the Target manifest.
+`driftline check` builds the same plan as `update` and reports changes without writing files or the Sync manifest.
 
 `check` must report:
 
 - managed file additions,
 - managed file updates,
 - managed file removals,
-- Target manifest additions,
-- Target manifest removals,
+- Sync manifest additions,
+- Sync manifest removals,
 - mode transitions,
 - conflicts.
 
 ### diff
 
-`driftline diff` reports content diffs for managed file additions and updates. It also reports non-content plan items such as Target manifest changes, removals, mode transitions, and conflicts.
+`driftline diff` reports content diffs for Managed file additions and updates. It also reports non-content plan items such as Sync manifest changes, removals, mode transitions, and conflicts.
 
 ### update
 
@@ -214,10 +219,10 @@ Template placement is part of initial adoption. Normal `update` must not silentl
 `update` behavior:
 
 - Resolve the full plan before writing anything.
-- If any conflict exists, fail without writing files or the Target manifest.
-- Add missing managed entries to the Target manifest.
-- Remove no-longer-managed entries from the Target manifest.
-- Remove Target manifest entries for files that changed from managed to template.
+- If any conflict exists, fail without writing files or the Sync manifest.
+- Add missing Managed entries to the Sync manifest.
+- Remove no-longer-Managed entries from the Sync manifest.
+- Remove Sync manifest entries for files that changed from Managed to Template.
 - Write target files for managed adds and updates.
 - Delete target files for removed managed entries.
 - Do not apply newly introduced templates to existing target repositories.
@@ -231,7 +236,7 @@ There is no standalone `prune` responsibility in the new design. Remove the stan
 
 Conflict handling must prefer user safety over silent overwrite.
 
-A conflict occurs when driftline needs to write a managed file to a target path that already exists but is not currently declared in the Target manifest for that file key.
+A conflict occurs when driftline needs to write a Managed file to a target path that already exists but is not currently declared in the Sync manifest for that File key.
 
 Typical conflict causes:
 
@@ -247,39 +252,39 @@ conflict github-workflow.ci: target already exists
   source mode: managed
 
 Choose one:
-  1. set another target path in .driftline-target.toml
+  1. set another target path in .driftline/sync.toml
   2. move the existing target file
   3. rerun with --force github-workflow.ci to overwrite
 ```
 
-Implement force overwrite as a one-time `driftline update --force <group.file>` CLI action. Do not persist force behavior in the Target manifest.
+Implement force overwrite as a one-time `driftline update --force <group.file>` CLI action. Do not persist force behavior in the Sync manifest.
 
 ## No Lock Or Historical State
 
 Do not write or read `driftline-lock.yaml`.
 
-The new design intentionally does not preserve previous target ownership state. The current source config and current Target manifest are the only sources of truth.
+The new design intentionally does not preserve previous target ownership state. The current Contract and current Sync manifest are the only sources of truth.
 
 This means:
 
-- managed files can be deleted because they are listed in the current Target manifest,
-- template files are safe from deletion because they are not listed in the Target manifest,
+- Managed files can be deleted because they are listed in the current Sync manifest,
+- Template files are safe from deletion because they are not listed in the Sync manifest,
 - old unknown files are target-owned and ignored,
-- old stale Target manifest entries are removed as managed sync cleanup.
+- old stale Sync manifest entries are removed as Managed sync cleanup.
 
 ## Migration Policy
 
 This repository is pre-release. Implement this redesign directly.
 
+Historical migration context: the earlier TOML redesign replaced `.driftline-source.yaml` and `.driftline-target.yaml` with `.driftline-source.toml` and `.driftline-target.toml`. Those root-level TOML paths are also old and unsupported under the current metadata layout. Implementations read only `.driftline/contract.toml` and `.driftline/sync.toml`.
+
 Required migration behavior:
 
-- Replace `.driftline-source.yaml` with `.driftline-source.toml`.
-- Replace `.driftline-target.yaml` with `.driftline-target.toml`.
 - Remove `driftline-lock.yaml` behavior.
 - Remove YAML schemas or stop presenting them as current schemas.
 - Rewrite README examples to TOML.
 - Rewrite tests and fixtures to TOML.
-- Reject old YAML files instead of parsing them.
+- Do not read old YAML files or old root-level TOML metadata files.
 
 Do not add migration commands, compatibility shims, fallback readers, deprecated aliases, dual-format parsing, or old-output compatibility unless the user explicitly asks for them later.
 
@@ -287,42 +292,42 @@ Do not add migration commands, compatibility shims, fallback readers, deprecated
 
 Keep the internal planning model simple:
 
-- Parse source config into active source entries keyed by `<group>.<file>`.
-- Parse the Target manifest into managed entries keyed by `<group>.<file>`.
+- Parse the Contract into active source entries keyed by `<group>.<file>`.
+- Parse the Sync manifest into Managed entries keyed by `<group>.<file>`.
 - Build a desired managed set from source entries with `mode = "managed"`.
-- Compare desired managed keys with Target manifest keys.
-- Add missing managed keys to the Target manifest with default target path equal to source path.
-- Remove Target manifest keys that are absent from the desired managed set.
+- Compare desired Managed keys with Sync manifest keys.
+- Add missing Managed keys to the Sync manifest with default target path equal to source path.
+- Remove Sync manifest keys that are absent from the desired Managed set.
 - Resolve target paths and detect conflicts before any write.
-- Apply Target manifest changes and file changes only after conflict-free planning.
+- Apply Sync manifest changes and file changes only after conflict-free planning.
 
-The source path is not duplicated in the Target manifest. File identity is the stable `<group>.<file>` key, so source-side renames are followed by keeping the same file key and changing only the source `path`.
+The source path is not duplicated in the Sync manifest. File identity is the stable `<group>.<file>` key, so source-side renames are followed by keeping the same File key and changing only the source `path`.
 
 ## Testing Requirements
 
 Tests must cover:
 
-- parsing valid source TOML,
-- parsing valid target TOML,
-- rejecting unknown source fields,
-- rejecting unknown target fields,
+- parsing valid Contract TOML,
+- parsing valid Sync manifest TOML,
+- rejecting unknown Contract fields,
+- rejecting unknown Sync manifest fields,
 - rejecting invalid modes,
 - rejecting invalid paths,
 - rejecting invalid group and file IDs,
-- `init` writes the Target manifest and places missing templates,
-- `init` does not record templates in the Target manifest,
-- `check` reports Target manifest additions and removals,
-- `update` auto-updates the Target manifest,
+- `init` writes the Sync manifest and places missing templates,
+- `init` does not record templates in the Sync manifest,
+- `check` reports Sync manifest additions and removals,
+- `update` auto-updates the Sync manifest,
 - managed file add/update/delete behavior,
-- managed-to-template transition leaves target file and removes Target manifest entry,
+- managed-to-template transition leaves target file and removes Sync manifest entry,
 - template-to-managed transition conflicts when the target path already exists,
-- source deletion of template does nothing because template is not in the Target manifest,
+- Contract deletion of Template does nothing because Template is not in the Sync manifest,
 - no command reads or writes `driftline-lock.yaml`,
 - standalone `prune` command is removed from the CLI without a compatibility alias.
 
 ## Out Of Scope
 
-- Multi-source Target manifests.
+- Multi-source Sync manifests.
 - Historical ownership tracking.
 - Automatic migration from YAML.
 - Persisted force-overwrite settings.

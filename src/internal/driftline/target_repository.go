@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"syscall"
 )
 
@@ -21,14 +20,14 @@ func (r TargetRepository) Apply(plan Plan) error {
 		root = "."
 	}
 
-	var commitConfig func() error
-	if planHasTargetConfigChanges(plan.Changes) {
-		commit, cleanup, err := PrepareTargetConfigWrite(filepath.Join(root, TargetConfigPath), plan.NextConfig)
+	var commitSyncManifest func() error
+	if planHasSyncManifestChanges(plan.Changes) {
+		commit, cleanup, err := PrepareSyncManifestRewrite(root, plan.NextSyncManifest)
 		if err != nil {
 			return err
 		}
 		defer cleanup()
-		commitConfig = commit
+		commitSyncManifest = commit
 	}
 
 	changes := SortedChanges(plan.Changes)
@@ -46,8 +45,8 @@ func (r TargetRepository) Apply(plan Plan) error {
 			}
 		}
 	}
-	if commitConfig != nil {
-		if err := commitConfig(); err != nil {
+	if commitSyncManifest != nil {
+		if err := commitSyncManifest(); err != nil {
 			return err
 		}
 	}
@@ -74,9 +73,9 @@ func removeManagedTargetFile(targetPath string) error {
 	return nil
 }
 
-func planHasTargetConfigChanges(changes []Change) bool {
+func planHasSyncManifestChanges(changes []Change) bool {
 	for _, change := range changes {
-		if change.Status == StatusTargetConfigAdd || change.Status == StatusTargetConfigRemove {
+		if change.Status == StatusSyncManifestAdd || change.Status == StatusSyncManifestRemove {
 			return true
 		}
 	}

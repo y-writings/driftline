@@ -1,14 +1,13 @@
 package driftline
 
 import (
-	"os"
-	"path/filepath"
+	"fmt"
 	"strings"
 	"testing"
 )
 
-func TestLoadSourceManifestTOML(t *testing.T) {
-	manifest, err := LoadSourceManifestBytes([]byte(`version = 2
+func TestLoadContractTOML(t *testing.T) {
+	contract, err := LoadContractBytes([]byte(`version = 2
 
 [files.github-workflow]
 ci = { path = ".github/workflows/ci.yaml", mode = "managed" }
@@ -18,27 +17,27 @@ release = { path = ".github/workflows/release.yaml", mode = "template" }
 config = { path = ".mise/config.toml", mode = "template" }
 `))
 	if err != nil {
-		t.Fatalf("load source manifest failed: %v", err)
+		t.Fatalf("load Contract failed: %v", err)
 	}
-	if manifest.Version != 2 {
-		t.Fatalf("unexpected version: %d", manifest.Version)
+	if contract.Version != 2 {
+		t.Fatalf("unexpected version: %d", contract.Version)
 	}
-	ci := manifest.Files["github-workflow"]["ci"]
+	ci := contract.Files["github-workflow"]["ci"]
 	if ci.Path != ".github/workflows/ci.yaml" || ci.Mode != ModeManaged {
 		t.Fatalf("unexpected ci entry: %#v", ci)
 	}
-	release := manifest.Files["github-workflow"]["release"]
+	release := contract.Files["github-workflow"]["release"]
 	if release.Path != ".github/workflows/release.yaml" || release.Mode != ModeTemplate {
 		t.Fatalf("unexpected release entry: %#v", release)
 	}
-	config := manifest.Files["mise"]["config"]
+	config := contract.Files["mise"]["config"]
 	if config.Path != ".mise/config.toml" || config.Mode != ModeTemplate {
 		t.Fatalf("unexpected mise config entry: %#v", config)
 	}
 }
 
-func TestLoadSourceManifestAcceptsTOML11MultilineInlineTables(t *testing.T) {
-	manifest, err := LoadSourceManifestBytes([]byte(`version = 2
+func TestLoadContractAcceptsTOML11MultilineInlineTables(t *testing.T) {
+	contract, err := LoadContractBytes([]byte(`version = 2
 
 [files.github-workflow]
 ci = {
@@ -51,30 +50,30 @@ release = {
 }
 `))
 	if err != nil {
-		t.Fatalf("load source manifest failed: %v", err)
+		t.Fatalf("load Contract failed: %v", err)
 	}
-	if got := manifest.Files["github-workflow"]["ci"].Mode; got != ModeManaged {
+	if got := contract.Files["github-workflow"]["ci"].Mode; got != ModeManaged {
 		t.Fatalf("unexpected ci mode: %q", got)
 	}
-	if got := manifest.Files["github-workflow"]["release"].Mode; got != ModeTemplate {
+	if got := contract.Files["github-workflow"]["release"].Mode; got != ModeTemplate {
 		t.Fatalf("unexpected release mode: %q", got)
 	}
 }
 
-func TestLoadSourceManifestRejectsInvalidTOMLModel(t *testing.T) {
+func TestLoadContractRejectsInvalidTOMLModel(t *testing.T) {
 	for name, input := range map[string]string{
-		"unknown root field":        "version = 2\nextra = true\n",
-		"unknown source file field": "version = 2\n[files.github-workflow]\nci = { path = \"ci.yaml\", mode = \"managed\", extra = true }\n",
-		"invalid mode":              "version = 2\n[files.github-workflow]\nci = { path = \"ci.yaml\", mode = \"copy\" }\n",
-		"missing path":              "version = 2\n[files.github-workflow]\nci = { mode = \"managed\" }\n",
-		"invalid group id":          "version = 2\n[files.\"github.workflow\"]\nci = { path = \"ci.yaml\", mode = \"managed\" }\n",
-		"invalid file id":           "version = 2\n[files.github-workflow]\n\"bad/id\" = { path = \"ci.yaml\", mode = \"managed\" }\n",
-		"invalid source path":       "version = 2\n[files.github-workflow]\nci = { path = \"../ci.yaml\", mode = \"managed\" }\n",
-		"duplicate source path":     "version = 2\n[files.first]\nci = { path = \"./same.yaml\", mode = \"managed\" }\n[files.second]\nci = { path = \"same.yaml\", mode = \"template\" }\n",
-		"old yaml shape":            "version: 2\nfiles:\n  - id: ci\n",
+		"unknown root field":          "version = 2\nextra = true\n",
+		"unknown Contract file field": "version = 2\n[files.github-workflow]\nci = { path = \"ci.yaml\", mode = \"managed\", extra = true }\n",
+		"invalid mode":                "version = 2\n[files.github-workflow]\nci = { path = \"ci.yaml\", mode = \"copy\" }\n",
+		"missing path":                "version = 2\n[files.github-workflow]\nci = { mode = \"managed\" }\n",
+		"invalid group id":            "version = 2\n[files.\"github.workflow\"]\nci = { path = \"ci.yaml\", mode = \"managed\" }\n",
+		"invalid file id":             "version = 2\n[files.github-workflow]\n\"bad/id\" = { path = \"ci.yaml\", mode = \"managed\" }\n",
+		"invalid source path":         "version = 2\n[files.github-workflow]\nci = { path = \"../ci.yaml\", mode = \"managed\" }\n",
+		"duplicate source path":       "version = 2\n[files.first]\nci = { path = \"./same.yaml\", mode = \"managed\" }\n[files.second]\nci = { path = \"same.yaml\", mode = \"template\" }\n",
+		"old yaml shape":              "version: 2\nfiles:\n  - id: ci\n",
 	} {
 		t.Run(name, func(t *testing.T) {
-			_, err := LoadSourceManifestBytes([]byte(input))
+			_, err := LoadContractBytes([]byte(input))
 			if err == nil {
 				t.Fatal("expected validation error")
 			}
@@ -82,8 +81,32 @@ func TestLoadSourceManifestRejectsInvalidTOMLModel(t *testing.T) {
 	}
 }
 
-func TestLoadTargetConfigTOML(t *testing.T) {
-	config, err := LoadTargetConfigBytes([]byte(`version = 2
+func TestLoadContractRejectsReservedMetadataPaths(t *testing.T) {
+	paths := []string{
+		".driftline",
+		".driftline/contract.toml",
+		".driftline/future/file",
+		"./.driftline/future",
+		".driftline/./future",
+	}
+	for _, path := range paths {
+		for _, mode := range []FileMode{ModeManaged, ModeTemplate} {
+			t.Run(fmt.Sprintf("%s/%s", mode, path), func(t *testing.T) {
+				_, err := LoadContractBytes([]byte(fmt.Sprintf(`version = 2
+
+[files.metadata]
+file = { path = %q, mode = %q }
+`, path, mode)))
+				if err == nil || !strings.Contains(err.Error(), path) || !strings.Contains(err.Error(), "reserved driftline metadata path") {
+					t.Fatalf("expected reserved metadata error containing authored path %q, got %v", path, err)
+				}
+			})
+		}
+	}
+}
+
+func TestLoadSyncManifestTOML(t *testing.T) {
+	manifest, err := LoadSyncManifestBytes([]byte(`version = 2
 
 [source]
 repository = "y-writings/source-repo"
@@ -93,17 +116,17 @@ ref = "main"
 ci = ".github/workflows/project-ci.yaml"
 `))
 	if err != nil {
-		t.Fatalf("load target config failed: %v", err)
+		t.Fatalf("load Sync manifest failed: %v", err)
 	}
-	if config.Version != 2 || config.Source.Repository != "y-writings/source-repo" || config.Source.Ref != "main" {
-		t.Fatalf("unexpected target config: %#v", config)
+	if manifest.Version != 2 || manifest.Source.Repository != "y-writings/source-repo" || manifest.Source.Ref != "main" {
+		t.Fatalf("unexpected Sync manifest: %#v", manifest)
 	}
-	if got := config.Files["github-workflow"]["ci"]; got != ".github/workflows/project-ci.yaml" {
+	if got := manifest.Files["github-workflow"]["ci"]; got != ".github/workflows/project-ci.yaml" {
 		t.Fatalf("unexpected target path: %q", got)
 	}
 }
 
-func TestLoadTargetConfigRejectsInvalidTOMLModel(t *testing.T) {
+func TestLoadSyncManifestRejectsInvalidTOMLModel(t *testing.T) {
 	for name, input := range map[string]string{
 		"unknown root field":       "version = 2\nextra = true\n[source]\nrepository = \"y-writings/source-repo\"\nref = \"main\"\n",
 		"unknown source field":     "version = 2\n[source]\nrepository = \"y-writings/source-repo\"\nref = \"main\"\nextra = true\n",
@@ -112,14 +135,12 @@ func TestLoadTargetConfigRejectsInvalidTOMLModel(t *testing.T) {
 		"invalid group id":         "version = 2\n[source]\nrepository = \"y-writings/source-repo\"\nref = \"main\"\n[files.\"github.workflow\"]\nci = \"ci.yaml\"\n",
 		"invalid file id":          "version = 2\n[source]\nrepository = \"y-writings/source-repo\"\nref = \"main\"\n[files.github-workflow]\n\"bad/id\" = \"ci.yaml\"\n",
 		"invalid target path":      "version = 2\n[source]\nrepository = \"y-writings/source-repo\"\nref = \"main\"\n[files.github-workflow]\nci = \"../ci.yaml\"\n",
-		"reserved target path":     "version = 2\n[source]\nrepository = \"y-writings/source-repo\"\nref = \"main\"\n[files.driftline]\ntarget = \".driftline-target.toml\"\n",
-		"reserved old lock path":   "version = 2\n[source]\nrepository = \"y-writings/source-repo\"\nref = \"main\"\n[files.driftline]\nlock = \"driftline-lock.yaml\"\n",
 		"duplicate target path":    "version = 2\n[source]\nrepository = \"y-writings/source-repo\"\nref = \"main\"\n[files.first]\nci = \"./same.yaml\"\n[files.second]\nci = \"same.yaml\"\n",
 		"old path_overrides shape": "version = 2\n[source]\nrepository = \"y-writings/source-repo\"\nref = \"main\"\n[[files]]\nid = \"ci\"\npath_overrides = { ci = \"custom.yaml\" }\n",
 		"old yaml shape":           "version: 2\nsource:\n  repository: y-writings/source-repo\n",
 	} {
 		t.Run(name, func(t *testing.T) {
-			_, err := LoadTargetConfigBytes([]byte(input))
+			_, err := LoadSyncManifestBytes([]byte(input))
 			if err == nil {
 				t.Fatal("expected validation error")
 			}
@@ -127,121 +148,193 @@ func TestLoadTargetConfigRejectsInvalidTOMLModel(t *testing.T) {
 	}
 }
 
-func TestTargetConfigFromSourceManifestIncludesManagedFilesOnly(t *testing.T) {
-	manifest, err := LoadSourceManifestBytes([]byte(`version = 2
+func TestLoadSyncManifestRejectsReservedMetadataPaths(t *testing.T) {
+	paths := []string{
+		".driftline",
+		".driftline/sync.toml",
+		".driftline/future/file",
+		"./.driftline/future",
+		".driftline/./future",
+	}
+	for _, path := range paths {
+		t.Run(path, func(t *testing.T) {
+			_, err := LoadSyncManifestBytes([]byte(fmt.Sprintf(`version = 2
+
+[source]
+repository = "y-writings/source-repo"
+ref = "main"
+
+[files.metadata]
+file = %q
+`, path)))
+			if err == nil || !strings.Contains(err.Error(), path) || !strings.Contains(err.Error(), "reserved driftline metadata path") {
+				t.Fatalf("expected reserved metadata error containing authored path %q, got %v", path, err)
+			}
+		})
+	}
+}
+
+func TestMetadataNearMissesAreOrdinaryPaths(t *testing.T) {
+	for _, path := range []string{".driftline-file", ".driftliner/file", "nested/.driftline/file"} {
+		t.Run(path, func(t *testing.T) {
+			for _, mode := range []FileMode{ModeManaged, ModeTemplate} {
+				t.Run("Contract "+string(mode), func(t *testing.T) {
+					_, err := LoadContractBytes([]byte(fmt.Sprintf(`version = 2
+
+[files.ordinary]
+file = { path = %q, mode = %q }
+`, path, mode)))
+					if err != nil {
+						t.Fatalf("load Contract with ordinary path %q: %v", path, err)
+					}
+				})
+			}
+
+			t.Run("Sync manifest", func(t *testing.T) {
+				_, err := LoadSyncManifestBytes([]byte(fmt.Sprintf(`version = 2
+
+[source]
+repository = "y-writings/source-repo"
+ref = "main"
+
+[files.ordinary]
+file = %q
+`, path)))
+				if err != nil {
+					t.Fatalf("load Sync manifest with ordinary path %q: %v", path, err)
+				}
+			})
+		})
+	}
+}
+
+func TestOldMetadataArtifactNamesAreOrdinaryPaths(t *testing.T) {
+	for _, path := range []string{".driftline-source.toml", ".driftline-target.toml", "driftline-lock.yaml"} {
+		t.Run(path, func(t *testing.T) {
+			for _, mode := range []FileMode{ModeManaged, ModeTemplate} {
+				t.Run("Contract "+string(mode), func(t *testing.T) {
+					_, err := LoadContractBytes([]byte(fmt.Sprintf(`version = 2
+
+[files.ordinary]
+file = { path = %q, mode = %q }
+`, path, mode)))
+					if err != nil {
+						t.Fatalf("load Contract with ordinary old artifact path %q: %v", path, err)
+					}
+				})
+			}
+
+			t.Run("Sync manifest", func(t *testing.T) {
+				_, err := LoadSyncManifestBytes([]byte(fmt.Sprintf(`version = 2
+
+[source]
+repository = "y-writings/source-repo"
+ref = "main"
+
+[files.ordinary]
+file = %q
+`, path)))
+				if err != nil {
+					t.Fatalf("load Sync manifest with ordinary old artifact path %q: %v", path, err)
+				}
+			})
+		})
+	}
+}
+
+func TestMetadataErrorsUseContractAndSyncManifestLabels(t *testing.T) {
+	tests := []struct {
+		name    string
+		load    func([]byte) error
+		input   string
+		wantErr string
+	}{
+		{
+			name: "Contract parse error",
+			load: func(data []byte) error {
+				_, err := LoadContractBytes(data)
+				return err
+			},
+			input:   "version =",
+			wantErr: "parse Contract",
+		},
+		{
+			name: "Contract unknown key",
+			load: func(data []byte) error {
+				_, err := LoadContractBytes(data)
+				return err
+			},
+			input:   "version = 2\nextra = true\n",
+			wantErr: `Contract contains unknown key "extra"`,
+		},
+		{
+			name: "Contract version",
+			load: func(data []byte) error {
+				_, err := LoadContractBytes(data)
+				return err
+			},
+			input:   "version = 1\n",
+			wantErr: "unsupported Contract version 1",
+		},
+		{
+			name: "Sync manifest parse error",
+			load: func(data []byte) error {
+				_, err := LoadSyncManifestBytes(data)
+				return err
+			},
+			input:   "version =",
+			wantErr: "parse Sync manifest",
+		},
+		{
+			name: "Sync manifest unknown key",
+			load: func(data []byte) error {
+				_, err := LoadSyncManifestBytes(data)
+				return err
+			},
+			input:   "version = 2\nextra = true\n",
+			wantErr: `Sync manifest contains unknown key "extra"`,
+		},
+		{
+			name: "Sync manifest version",
+			load: func(data []byte) error {
+				_, err := LoadSyncManifestBytes(data)
+				return err
+			},
+			input:   "version = 1\n",
+			wantErr: "unsupported Sync manifest version 1",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.load([]byte(tt.input))
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("expected error containing %q, got %v", tt.wantErr, err)
+			}
+		})
+	}
+}
+
+func TestSyncManifestFromContractIncludesManagedFilesOnly(t *testing.T) {
+	contract, err := LoadContractBytes([]byte(`version = 2
 
 [files.github-workflow]
 ci = { path = ".github/workflows/ci.yaml", mode = "managed" }
 release = { path = ".github/workflows/release.yaml", mode = "template" }
 `))
 	if err != nil {
-		t.Fatalf("load source manifest failed: %v", err)
+		t.Fatalf("load Contract failed: %v", err)
 	}
 
-	config, err := TargetConfigFromSourceManifest("y-writings/source-repo", "main", manifest)
+	manifest, err := SyncManifestFromContract("y-writings/source-repo", "main", contract)
 	if err != nil {
-		t.Fatalf("create target config failed: %v", err)
+		t.Fatalf("create Sync manifest failed: %v", err)
 	}
-	if got := config.Files["github-workflow"]["ci"]; got != ".github/workflows/ci.yaml" {
+	if got := manifest.Files["github-workflow"]["ci"]; got != ".github/workflows/ci.yaml" {
 		t.Fatalf("managed file default target mismatch: %q", got)
 	}
-	if _, ok := config.Files["github-workflow"]["release"]; ok {
-		t.Fatalf("template file must not be recorded in target config: %#v", config.Files)
-	}
-}
-
-func TestWriteTargetConfigWritesGroupedTOML(t *testing.T) {
-	targetDir := t.TempDir()
-	path := filepath.Join(targetDir, TargetConfigPath)
-	config := TargetConfig{
-		Version: 2,
-		Source:  TargetSource{Repository: "y-writings/source-repo", Ref: "main"},
-		Files: map[string]map[string]string{
-			"github-workflow": {"ci": ".github/workflows/project-ci.yaml"},
-		},
-	}
-
-	if err := WriteTargetConfig(path, config); err != nil {
-		t.Fatalf("write target config failed: %v", err)
-	}
-	written, err := LoadTargetConfig(path)
-	if err != nil {
-		t.Fatalf("written target config should parse: %v", err)
-	}
-	if got := written.Files["github-workflow"]["ci"]; got != ".github/workflows/project-ci.yaml" {
-		t.Fatalf("unexpected round-trip target path: %q", got)
-	}
-	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatalf("stat target config failed: %v", err)
-	}
-	if got := info.Mode().Perm(); got != 0o644 {
-		t.Fatalf("target config should be readable, mode=%#o", got)
-	}
-}
-
-func TestPrepareTargetConfigWriteDoesNotReplaceConfigBeforeCommit(t *testing.T) {
-	targetDir := t.TempDir()
-	path := filepath.Join(targetDir, TargetConfigPath)
-	if err := WriteTargetConfig(path, TargetConfig{Version: 2, Source: TargetSource{Repository: "y-writings/old-source", Ref: "main"}}); err != nil {
-		t.Fatalf("write old target config failed: %v", err)
-	}
-	commit, cleanup, err := PrepareTargetConfigWrite(path, TargetConfig{
-		Version: 2,
-		Source:  TargetSource{Repository: "y-writings/source-repo", Ref: "main"},
-		Files: map[string]map[string]string{
-			"github-workflow": {"ci": ".github/workflows/ci.yaml"},
-		},
-	})
-	if err != nil {
-		t.Fatalf("prepare target config write failed: %v", err)
-	}
-	defer cleanup()
-	beforeCommit, err := LoadTargetConfig(path)
-	if err != nil {
-		t.Fatalf("old target config should still parse: %v", err)
-	}
-	if beforeCommit.Source.Repository != "y-writings/old-source" {
-		t.Fatalf("prepare should not replace target config before commit: %#v", beforeCommit)
-	}
-	if err := commit(); err != nil {
-		t.Fatalf("commit target config failed: %v", err)
-	}
-	afterCommit, err := LoadTargetConfig(path)
-	if err != nil {
-		t.Fatalf("new target config should parse: %v", err)
-	}
-	if got := afterCommit.Files["github-workflow"]["ci"]; got != ".github/workflows/ci.yaml" {
-		t.Fatalf("unexpected committed config: %#v", afterCommit)
-	}
-}
-
-func TestPrepareTargetConfigWritePreservesExistingFileMode(t *testing.T) {
-	targetDir := t.TempDir()
-	path := filepath.Join(targetDir, TargetConfigPath)
-	if err := os.WriteFile(path, []byte(targetConfigText("y-writings/old-source")), 0o640); err != nil {
-		t.Fatalf("write old target config failed: %v", err)
-	}
-	if err := os.Chmod(path, 0o640); err != nil {
-		t.Fatalf("chmod old target config failed: %v", err)
-	}
-	commit, cleanup, err := PrepareTargetConfigWrite(path, TargetConfig{
-		Version: 2,
-		Source:  TargetSource{Repository: "y-writings/source-repo", Ref: "main"},
-	})
-	if err != nil {
-		t.Fatalf("prepare target config write failed: %v", err)
-	}
-	defer cleanup()
-	if err := commit(); err != nil {
-		t.Fatalf("commit target config failed: %v", err)
-	}
-	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatalf("stat target config failed: %v", err)
-	}
-	if got := info.Mode().Perm(); got != 0o640 {
-		t.Fatalf("target config mode should be preserved, mode=%#o", got)
+	if _, ok := manifest.Files["github-workflow"]["release"]; ok {
+		t.Fatalf("template file must not be recorded in Sync manifest: %#v", manifest.Files)
 	}
 }
 
@@ -259,13 +352,4 @@ func TestValidateConfigPath(t *testing.T) {
 			t.Fatalf("expected labelled validation error for %q, got %v", path, err)
 		}
 	}
-}
-
-func targetConfigText(repository string) string {
-	return `version = 2
-
-[source]
-repository = "` + repository + `"
-ref = "main"
-`
 }

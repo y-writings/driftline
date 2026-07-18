@@ -1,5 +1,7 @@
 # AGENTS.md
 
+<!-- markdownlint-disable MD013 -->
+
 ## Project Status
 
 `driftline` is a pre-release CLI tool. It has not shipped a stable public interface, so there is no compatibility contract for existing command names, flags, configuration fields, output formats, lock-file formats, internal APIs, or repository layout.
@@ -14,11 +16,13 @@ If an old interface conflicts with a clearer new interface, replace it instead o
 
 ## Active Config Redesign Constraint
 
-The canonical design for the current configuration redesign is `docs/superpowers/specs/2026-06-27-toml-managed-template-sync-design.md`.
+The canonical design for Managed/Template behavior and configuration shape is `docs/superpowers/specs/2026-06-27-toml-managed-template-sync-design.md`.
+
+The canonical design for repository metadata paths and artifact names is `docs/superpowers/specs/2026-07-18-driftline-metadata-layout-design.md`. It supersedes path and naming decisions in the earlier design. Use `.driftline/contract.toml` and `.driftline/sync.toml`; do not preserve the old root-level paths for compatibility.
 
 That redesign is intentionally destructive. Implement it by replacing the current YAML, lock-file, `path_overrides`, `if_not_exists`, and standalone `prune` model. Do not preserve old behavior for compatibility.
 
-Previous docs, plans, schemas, README examples, tests, and fixtures that describe the YAML config shape or lock-file based behavior are stale for this work. Do not use them as design references or compatibility requirements. Use them only to locate obsolete implementation, tests, docs, or fixtures that must be removed or rewritten to match the canonical redesign spec.
+Previous docs, plans, schemas, README examples, tests, and fixtures that describe the YAML config shape, lock-file based behavior, or old root-level TOML paths are stale for this work. Do not use them as design references or compatibility requirements. Use them only to locate obsolete implementation, tests, docs, or fixtures that must be removed or rewritten to match the canonical redesign specs.
 
 ## Safety Boundary
 

@@ -1,6 +1,8 @@
 # driftline
 
-driftline synchronizes files from a source repository into a target repository using explicit source and target configuration. This context defines the product language for managed/template file sync.
+<!-- markdownlint-disable MD013 -->
+
+driftline synchronizes files from a Source Repository into a Target Repository using an explicit Contract and Sync manifest. This context defines the product language for Managed/Template file sync.
 
 ## Language
 
@@ -12,13 +14,13 @@ _Avoid_: Upstream package, template package.
 The repository where driftline places and synchronizes files from a Source Repository.
 _Avoid_: Client repo, destination project.
 
-**Source Config**:
-The Source Repository's manifest of file groups, file identifiers, source paths, and file modes.
-_Avoid_: Source schema, package manifest.
+**Contract**:
+The Source Repository's ref-scoped declaration of file groups, stable file identifiers, source paths, and file modes.
+_Avoid_: Compatibility contract, package manifest, export receipt.
 
-**Target manifest**:
-The Target Repository's human-editable record of the Source Repository, source ref, and target paths for currently Managed files.
-_Avoid_: Lock file, state file.
+**Sync manifest**:
+The Target Repository's human-editable, driftline-updatable record of one Source Repository/ref and target paths for currently Managed files.
+_Avoid_: Lock file, state file, import receipt, bidirectional sync configuration.
 
 **Managed file**:
 A Source Repository file that driftline keeps synchronized in the Target Repository.
@@ -29,19 +31,19 @@ A Source Repository file used only for initial placement; after placement it bec
 _Avoid_: Optional managed file, one-shot managed file.
 
 **File key**:
-The stable `<group>.<file>` identity for a file declared by the Source Config and, for Managed files, referenced by the Target manifest.
+The stable `<group>.<file>` identity for a file declared by the Contract and, for Managed files, referenced by the Sync manifest.
 _Avoid_: Path key, config path.
 
 **Sync plan**:
-The desired set of Target Repository changes derived from the current Source Config, Target manifest, source file bytes, and target file state.
+The desired set of Target Repository changes derived from the current Contract, Sync manifest, source file bytes, and target file state.
 _Avoid_: Migration, transaction log.
 
 ## Example Dialogue
 
-Dev: The Source Config changed `github-workflow.ci` from a Template file to a Managed file.
+Dev: The Contract changed `github-workflow.ci` from a Template file to a Managed file.
 
-Domain expert: Then the Sync plan should treat the existing target path as target-owned unless the Target manifest already records that File key.
+Domain expert: Then the Sync plan should treat the existing target path as target-owned unless the Sync manifest already records that File key.
 
 Dev: If it is target-owned, driftline reports a conflict instead of overwriting it.
 
-Domain expert: Right. The Target manifest is the only current record of Managed files; there is no lock file or historical ownership state.
+Domain expert: Right. The Sync manifest is the only current record of Managed files; there is no lock file or historical ownership state.

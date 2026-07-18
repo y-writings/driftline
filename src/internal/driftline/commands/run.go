@@ -193,10 +193,10 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, `usage: driftline <command> [options]
 
 commands:
-  init owner/repo  create .driftline-target.toml from a GitHub Source Repository
+  init owner/repo  create .driftline/sync.toml from a GitHub Source Repository
   check            check whether target files match the Source Repository
   diff             show diffs for files that would be added or updated
-  update           sync managed files and refresh .driftline-target.toml
+  update           sync managed files and refresh .driftline/sync.toml
 
 examples:
   driftline init owner/repo
@@ -207,7 +207,7 @@ examples:
 
 options:
   --target-dir string  target repository directory (default ".")
-  --ref string         init-only ref to preserve in .driftline-target.toml
+  --ref string         init-only ref to preserve in .driftline/sync.toml
   --force              init-only adopt existing regular Managed target files
   --force group.file   update-only one-time conflict overwrite
 

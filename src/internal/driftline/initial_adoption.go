@@ -13,8 +13,8 @@ type InitialAdoptionOptions struct {
 	Source                      SourceClient
 	Repository                  string
 	Commit                      string
-	Manifest                    SourceManifest
-	TargetConfig                TargetConfig
+	Contract                    Contract
+	SyncManifest                SyncManifest
 	AdoptExistingManagedTargets bool
 }
 
@@ -23,9 +23,9 @@ func AdoptInitialTargetRepository(opts InitialAdoptionOptions) error {
 }
 
 type initialAdoption struct {
-	opts                     InitialAdoptionOptions
-	prepareTargetConfigWrite func(path string, config TargetConfig) (func() error, func() error, error)
-	writeFileBytes           func(target string, data []byte) error
+	opts                      InitialAdoptionOptions
+	prepareSyncManifestCreate func(root string, manifest SyncManifest) (func() error, func() error, error)
+	writeFileBytes            func(target string, data []byte) error
 }
 
 type initialAdoptionTemplate struct {
@@ -42,14 +42,14 @@ func (a initialAdoption) adopt() error {
 	if opts.Source == nil {
 		return errors.New("source client is required")
 	}
-
-	configPath := filepath.Join(root, TargetConfigPath)
-	exists, err := initialAdoptionPathExists(configPath)
-	if err != nil {
+	if err := validateContract(opts.Contract); err != nil {
 		return err
 	}
-	if exists {
-		return fmt.Errorf("target config already exists: %s", TargetConfigPath)
+	if err := validateSyncManifest(opts.SyncManifest); err != nil {
+		return err
+	}
+	if err := ValidateSyncManifestCreation(root); err != nil {
+		return err
 	}
 
 	templates, err := a.collectTemplates(root)
@@ -57,15 +57,15 @@ func (a initialAdoption) adopt() error {
 		return err
 	}
 
-	prepareTargetConfigWrite := a.prepareTargetConfigWrite
-	if prepareTargetConfigWrite == nil {
-		prepareTargetConfigWrite = PrepareTargetConfigWrite
+	prepareSyncManifestCreate := a.prepareSyncManifestCreate
+	if prepareSyncManifestCreate == nil {
+		prepareSyncManifestCreate = PrepareSyncManifestCreate
 	}
-	commitTargetConfig, cleanupTargetConfig, err := prepareTargetConfigWrite(configPath, opts.TargetConfig)
+	commitSyncManifest, cleanupSyncManifest, err := prepareSyncManifestCreate(root, opts.SyncManifest)
 	if err != nil {
 		return err
 	}
-	defer cleanupTargetConfig()
+	defer cleanupSyncManifest()
 
 	writeFileBytes := a.writeFileBytes
 	if writeFileBytes == nil {
@@ -76,7 +76,7 @@ func (a initialAdoption) adopt() error {
 			return err
 		}
 	}
-	return commitTargetConfig()
+	return commitSyncManifest()
 }
 
 func (a initialAdoption) collectTemplates(root string) ([]initialAdoptionTemplate, error) {
@@ -87,10 +87,7 @@ func (a initialAdoption) collectTemplates(root string) ([]initialAdoptionTemplat
 
 	missingTemplates := []missingTemplate{}
 	templates := []initialAdoptionTemplate{}
-	for _, entry := range SourceEntries(a.opts.Manifest) {
-		if IsReservedTargetPath(entry.Path) {
-			return nil, fmt.Errorf("reserved target path %q", entry.Path)
-		}
+	for _, entry := range ContractEntries(a.opts.Contract) {
 		targetPath, err := PathWithin(root, entry.Path, fmt.Sprintf("target %q", entry.Key))
 		if err != nil {
 			return nil, err
@@ -177,9 +174,4 @@ func initialAdoptionPathInfo(path string) (os.FileInfo, bool, error) {
 		return nil, false, nil
 	}
 	return nil, false, err
-}
-
-func initialAdoptionPathExists(path string) (bool, error) {
-	_, exists, err := initialAdoptionPathInfo(path)
-	return exists, err
 }
