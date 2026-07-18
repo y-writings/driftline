@@ -1,20 +1,16 @@
-name: scan
-
+name: "[00] Security scan"
 on:
   pull_request:
-
 permissions:
   contents: read
-
 jobs:
   scan:
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/betterleaks/betterleaks:v1.1.1@sha256:8c1fdaaeef493bb27dda66051a2bf7874e5c6feeb5fe8eced1359afdbf8c2571
+      image: ghcr.io/betterleaks/betterleaks:v1.4.1@sha256:1edd658874fbbd42fe224b7b0ccff32acc5940dd0098ad651caf32998462bff7
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0
-
       - name: Run betterleaks
         run: betterleaks dir --no-banner --verbose .
