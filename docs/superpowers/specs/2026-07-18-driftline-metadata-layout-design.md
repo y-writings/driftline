@@ -45,7 +45,7 @@ The repository authors the Contract and driftline reads it. Driftline does not r
 
 "Contract" means the file interface exposed by the selected repository ref. It does not promise compatibility between refs, semantic versioning, package publication, or a bilateral agreement.
 
-The Contract uses the Source Config TOML shape defined by the Managed/Template sync design. This layout change does not independently change that schema or its version.
+The Contract uses the Contract TOML shape defined by the Managed/Template sync design. This layout change does not independently change that schema or its version.
 
 ## Sync Manifest
 
@@ -62,7 +62,7 @@ The Sync manifest is current desired mapping, not history, generated lock state,
 
 "Sync" means explicit, one-way reconciliation from the providing repository to the local repository. It does not mean bidirectional synchronization, background synchronization, or a new `sync` command.
 
-The Sync manifest uses the Target manifest TOML shape defined by the Managed/Template sync design. This layout change does not independently change that schema or its version.
+The Sync manifest uses the Sync manifest TOML shape defined by the Managed/Template sync design. This layout change does not independently change that schema or its version.
 
 ## Dual-Role Repositories
 
@@ -99,7 +99,7 @@ The reserved subtree is the stable extension point for future driftline metadata
 - `driftline init <owner/repo>` reads `.driftline/contract.toml` from the providing repository.
 - `init` creates `.driftline/` when needed and writes `.driftline/sync.toml` in the local repository.
 - `check`, `diff`, and `update` read `.driftline/sync.toml`.
-- `update` may rewrite `.driftline/sync.toml` under the existing Target manifest rules.
+- `update` may rewrite `.driftline/sync.toml` under the existing Sync manifest rules.
 - No command infers a role from the presence of only one artifact when the other exact path is required.
 
 Diagnostics must use the exact path and artifact role when either could be ambiguous. Preferred forms include:
@@ -110,7 +110,7 @@ Sync manifest already exists: .driftline/sync.toml
 reserved driftline metadata path: .driftline/example.toml
 ```
 
-Documentation may continue to use Source Repository and Target Repository for the endpoints of a synchronization relationship. It must call the artifacts the Contract and Sync manifest rather than Source Config and Target manifest when referring to these files.
+Documentation may continue to use Source Repository and Target Repository for the endpoints of a synchronization relationship. It must call the artifacts the Contract and Sync manifest rather than using endpoint-based artifact names.
 
 ## Migration Policy
 
