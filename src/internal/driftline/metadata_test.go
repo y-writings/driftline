@@ -105,9 +105,9 @@ func TestSyncMetadataCreationRejectsUnsafeMetadataDirectory(t *testing.T) {
 			metadataTestSetUnsafeMetadata(t, root, state)
 
 			err := ValidateSyncManifestCreation(root)
-			metadataTestRequireError(t, err, "Metadata path is not a directory: .driftline")
+			metadataTestRequireError(t, err, "driftline metadata path is not a real directory: .driftline")
 			_, _, err = PrepareSyncManifestCreate(root, metadataTestManifest("y-writings/source-repo"))
-			metadataTestRequireError(t, err, "Metadata path is not a directory: .driftline")
+			metadataTestRequireError(t, err, "driftline metadata path is not a real directory: .driftline")
 		})
 	}
 }
@@ -196,7 +196,7 @@ func TestLoadSyncManifestRejectsUnsafePathsWithoutFollowing(t *testing.T) {
 			test.setup(t, root)
 			_, err := LoadSyncManifest(root)
 			if test.wantErr == "" {
-				metadataTestRequireError(t, err, "Metadata path is not a directory: .driftline")
+				metadataTestRequireError(t, err, "driftline metadata path is not a real directory: .driftline")
 				return
 			}
 			metadataTestRequireError(t, err, test.wantErr)
@@ -233,8 +233,41 @@ func TestPrepareSyncManifestRewriteRejectsUnsafeMetadataDirectory(t *testing.T) 
 			root := t.TempDir()
 			metadataTestSetUnsafeMetadata(t, root, state)
 			_, _, err := PrepareSyncManifestRewrite(root, metadataTestManifest("y-writings/source-repo"))
-			metadataTestRequireError(t, err, "Metadata path is not a directory: .driftline")
+			metadataTestRequireError(t, err, "driftline metadata path is not a real directory: .driftline")
 		})
+	}
+}
+
+func TestLoadSyncManifestReadErrorIncludesCanonicalPath(t *testing.T) {
+	root := t.TempDir()
+	metadataTestWriteManifest(t, root, metadataTestManifest("y-writings/source-repo"), 0o000)
+	manifestPath := filepath.Join(root, SyncManifestPath)
+	defer os.Chmod(manifestPath, 0o600)
+	if _, err := os.ReadFile(manifestPath); err == nil {
+		t.Skip("filesystem permits reading a mode 000 file")
+	}
+
+	_, err := LoadSyncManifest(root)
+	if err == nil || !strings.HasPrefix(err.Error(), "read Sync manifest .driftline/sync.toml: ") {
+		t.Fatalf("expected canonical read context, got %v", err)
+	}
+}
+
+func TestPrepareSyncManifestCreateErrorIncludesCanonicalMetadataPath(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "missing-parent", "root")
+	_, _, err := PrepareSyncManifestCreate(root, metadataTestManifest("y-writings/source-repo"))
+	if err == nil || !strings.HasPrefix(err.Error(), "create driftline metadata directory .driftline: ") {
+		t.Fatalf("expected canonical metadata creation context, got %v", err)
+	}
+}
+
+func TestSyncMetadataInspectionErrorIncludesCanonicalMetadataPath(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "root-file")
+	metadataTestWriteFile(t, root, []byte("not a root directory\n"), 0o600)
+
+	err := ValidateSyncManifestCreation(root)
+	if err == nil || !strings.HasPrefix(err.Error(), "inspect driftline metadata directory .driftline: ") {
+		t.Fatalf("expected canonical metadata inspection context, got %v", err)
 	}
 }
 

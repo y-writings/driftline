@@ -26,7 +26,7 @@ func LoadSyncManifest(root string) (SyncManifest, error) {
 		return SyncManifest{}, syncManifestNotFoundError()
 	}
 	if err != nil {
-		return SyncManifest{}, fmt.Errorf("read Sync manifest: %w", err)
+		return SyncManifest{}, fmt.Errorf("read Sync manifest %s: %w", SyncManifestPath, err)
 	}
 	return LoadSyncManifestBytes(data)
 }
@@ -42,7 +42,7 @@ func PrepareSyncManifestCreate(root string, manifest SyncManifest) (commit func(
 	}
 	if !metadataExists {
 		if err := os.Mkdir(filepath.Join(root, MetadataDirectoryPath), 0o755); err != nil {
-			return nil, nil, fmt.Errorf("create metadata directory %s: %w", MetadataDirectoryPath, err)
+			return nil, nil, fmt.Errorf("create driftline metadata directory %s: %w", MetadataDirectoryPath, err)
 		}
 	}
 	if err := ValidateSyncManifestCreation(root); err != nil {
@@ -105,10 +105,10 @@ func inspectMetadataDirectory(root string, allowMissing bool) (bool, error) {
 		return false, syncManifestNotFoundError()
 	}
 	if err != nil {
-		return false, fmt.Errorf("inspect metadata path %s: %w", MetadataDirectoryPath, err)
+		return false, fmt.Errorf("inspect driftline metadata directory %s: %w", MetadataDirectoryPath, err)
 	}
 	if !info.IsDir() {
-		return false, fmt.Errorf("Metadata path is not a directory: %s", MetadataDirectoryPath)
+		return false, fmt.Errorf("driftline metadata path is not a real directory: %s", MetadataDirectoryPath)
 	}
 	return true, nil
 }
