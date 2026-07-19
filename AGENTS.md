@@ -18,6 +18,8 @@ If an old interface conflicts with a clearer new interface, replace it instead o
 
 The canonical design for Managed/Template behavior and configuration shape is `docs/superpowers/specs/2026-06-27-toml-managed-template-sync-design.md`.
 
+The canonical design for Contract-managed root `.gitignore` sections is `docs/superpowers/specs/2026-07-19-contract-gitignore-section-design.md`. It supersedes only the root `gitignore` removal decision in the Managed/Template design.
+
 The canonical design for repository metadata paths and artifact names is `docs/superpowers/specs/2026-07-18-driftline-metadata-layout-design.md`. It supersedes path and naming decisions in the earlier design. Use `.driftline/contract.toml` and `.driftline/sync.toml`; do not preserve the old root-level paths for compatibility.
 
 That redesign is intentionally destructive. Implement it by replacing the current YAML, lock-file, `path_overrides`, `if_not_exists`, and standalone `prune` model. Do not preserve old behavior for compatibility.

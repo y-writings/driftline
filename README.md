@@ -34,10 +34,16 @@ go build ./src/cmd/driftline
 
 ## Contract
 
-The Source Repository owns `.driftline/contract.toml`. The Contract declares stable file identities, source paths, and whether each file uses Managed or Template mode.
+The Source Repository owns `.driftline/contract.toml`. The Contract declares stable file identities, source paths, whether each file uses Managed or Template mode, and optional root `.gitignore` entries.
 
 ```toml
 version = 2
+
+[gitignore]
+entries = [
+  ".env",
+  "/dist/",
+]
 
 [files.github-workflow]
 ci = { path = ".github/workflows/ci.yaml", mode = "managed" }
@@ -117,6 +123,26 @@ driftline init y-writings/source-repo --force
 Managed files stay synchronized with the source. `driftline update` adds missing Managed entries to the Sync manifest, updates changed files, removes entries that are no longer Managed, and deletes target files only when their Managed file entry is removed from the Contract. If a file changes from Managed to Template, `update` removes the Sync manifest entry and leaves the target file untouched.
 
 Template files are initial placement aids. `driftline init` writes a template file only when the target path is missing. Later updates do not record, update, or delete template files.
+
+## Gitignore Section
+
+The optional Contract `[gitignore]` table gives the Source Repository ownership of one marker-delimited region in the Target Repository's root `.gitignore`. The example Contract generates this exact block:
+
+```gitignore
+# start driftline from y-writings/source-repo/.driftline/contract.toml
+# DO NOT EDIT: this section is managed automatically by driftline.
+.env
+/dist/
+# end driftline
+```
+
+The start marker records only the Source Repository that provided the Contract, not its ref or resolved commit. Each `entries` value is a raw line: driftline preserves authored order, duplicates, empty lines, and whitespace. Matching or duplicate lines outside the block remain target-owned and are ignored. Reconciliation replaces the complete marked region while preserving every byte outside it.
+
+An absent `[gitignore]` table or `entries = []` removes the generated block but keeps `.gitignore` and all bytes outside the markers. Malformed, out-of-order, or multiple recognized markers are errors that require manual repair and are not bypassed by `--force`.
+
+`init` validates `[gitignore]` but does not inspect existing markers or apply the generated block. A Template file whose path is exactly `.gitignore` may coexist and seed a missing target during `init`; `check`, `diff`, and `update` later reconcile the generated region. A Managed file cannot resolve to root `.gitignore` while `[gitignore]` is present. The Sync manifest provides no target-side opt-out, target-path override, or entry override for this region.
+
+Packaged builds support Linux and Darwin, where Gitignore section updates use atomic replacement. On platforms without supported atomic replacement, an `update` that would rewrite the section fails before mutation; Contract parsing, `check`, and `diff` remain available.
 
 ## Commands
 
