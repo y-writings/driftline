@@ -76,6 +76,15 @@ type Change struct {
 	ForceAllowed  bool
 }
 
+type GitIgnoreSectionChange struct {
+	Status        Status
+	Reason        string
+	TargetPath    string
+	TargetMissing bool
+	OriginalBytes []byte
+	DesiredBytes  []byte
+}
+
 func SortedChanges(changes []Change) []Change {
 	out := append([]Change(nil), changes...)
 	sort.Slice(out, func(i, j int) bool {
