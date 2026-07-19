@@ -48,7 +48,10 @@ func readRegularFileNoFollow(path string) ([]byte, os.FileMode, error) {
 }
 
 func windowsExtendedPath(path string) string {
-	if strings.HasPrefix(path, `\\?\`) || !filepath.IsAbs(path) {
+	if strings.HasPrefix(path, `\\?\`) ||
+		strings.HasPrefix(path, `\\.\`) ||
+		strings.HasPrefix(path, `\??\`) ||
+		!filepath.IsAbs(path) {
 		return path
 	}
 	if strings.HasPrefix(path, `\\`) {

@@ -17,6 +17,8 @@ func TestWindowsExtendedPath(t *testing.T) {
 	}{
 		{name: "drive absolute", path: `C:\repository\.gitignore`, want: `\\?\C:\repository\.gitignore`},
 		{name: "UNC", path: `\\server\share\repository\.gitignore`, want: `\\?\UNC\server\share\repository\.gitignore`},
+		{name: "Win32 device", path: `\\.\C:\repository\.gitignore`, want: `\\.\C:\repository\.gitignore`},
+		{name: "NT native", path: `\??\C:\repository\.gitignore`, want: `\??\C:\repository\.gitignore`},
 		{name: "extended drive", path: `\\?\C:\repository\.gitignore`, want: `\\?\C:\repository\.gitignore`},
 		{name: "extended UNC", path: `\\?\UNC\server\share\repository\.gitignore`, want: `\\?\UNC\server\share\repository\.gitignore`},
 		{name: "relative", path: `repository\.gitignore`, want: `repository\.gitignore`},
