@@ -212,15 +212,16 @@ func TestTransformGitIgnoreSectionRejectsMalformedMarkersBeforeConfigDecision(t 
 	otherStart := "# start driftline from other/repo/.driftline/contract.toml"
 	end := "# end driftline"
 	tests := []struct {
-		name    string
-		current string
+		name        string
+		current     string
+		wantProblem string
 	}{
-		{name: "missing end", current: start},
-		{name: "missing start with final unterminated end", current: "entry\n" + end},
-		{name: "reversed", current: end + "\n" + start + "\n"},
-		{name: "nested start", current: start + "\n" + otherStart + "\n" + end + "\n"},
-		{name: "duplicate complete sections", current: start + "\n" + end + "\n" + otherStart + "\n" + end + "\n"},
-		{name: "recognized end inserted in owned content", current: start + "\nentry\n" + end + "\nentry\n" + end + "\n"},
+		{name: "missing end", current: start, wantProblem: "start marker has no matching end marker"},
+		{name: "missing start with final unterminated end", current: "entry\n" + end, wantProblem: "end marker has no matching start marker"},
+		{name: "reversed", current: end + "\n" + start + "\n", wantProblem: "end marker appears before start marker"},
+		{name: "nested start", current: start + "\n" + otherStart + "\n" + end + "\n", wantProblem: "found 2 start markers and 1 end markers; expected exactly one of each"},
+		{name: "duplicate complete sections", current: start + "\n" + end + "\n" + otherStart + "\n" + end + "\n", wantProblem: "found 2 start markers and 2 end markers; expected exactly one of each"},
+		{name: "recognized end inserted in owned content", current: start + "\nentry\n" + end + "\nentry\n" + end + "\n", wantProblem: "found 1 start markers and 2 end markers; expected exactly one of each"},
 	}
 
 	for _, tt := range tests {
@@ -229,8 +230,13 @@ func TestTransformGitIgnoreSectionRejectsMalformedMarkersBeforeConfigDecision(t 
 			if err == nil {
 				t.Fatal("expected malformed marker error")
 			}
-			if !strings.HasPrefix(err.Error(), "invalid driftline section in .gitignore:") {
-				t.Fatalf("unexpected error: %v", err)
+			want := "invalid driftline section in .gitignore: " + tt.wantProblem +
+				" Repair the driftline markers in .gitignore manually."
+			if err.Error() != want {
+				t.Fatalf("unexpected error:\ngot:  %q\nwant: %q", err, want)
+			}
+			if strings.Contains(err.Error(), "--force") {
+				t.Fatalf("marker error must not suggest force: %v", err)
 			}
 		})
 	}

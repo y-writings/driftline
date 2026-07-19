@@ -1137,7 +1137,7 @@ config = { path = "tool.toml", mode = "managed" }
 	if err != errDrift {
 		t.Fatalf("diff should return drift, got %v", err)
 	}
-	managedAt := strings.Index(stdout.String(), filepath.Join(targetDir, "tool.toml"))
+	managedAt := strings.Index(stdout.String(), "-old\n+new\n")
 	gitIgnoreAt := strings.Index(stdout.String(), "diff --git a/.gitignore b/.gitignore")
 	if managedAt < 0 || gitIgnoreAt < 0 || managedAt >= gitIgnoreAt {
 		t.Fatalf("Managed diff should precede Gitignore diff:\n%s", stdout.String())

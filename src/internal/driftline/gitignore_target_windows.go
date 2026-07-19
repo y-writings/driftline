@@ -5,11 +5,13 @@ package driftline
 import (
 	"io"
 	"os"
+	"path/filepath"
+	"strings"
 	"syscall"
 )
 
 func readRegularFileNoFollow(path string) ([]byte, os.FileMode, error) {
-	pathPtr, err := syscall.UTF16PtrFromString(path)
+	pathPtr, err := syscall.UTF16PtrFromString(windowsExtendedPath(path))
 	if err != nil {
 		return nil, 0, &os.PathError{Op: "open", Path: path, Err: err}
 	}
@@ -43,4 +45,14 @@ func readRegularFileNoFollow(path string) ([]byte, os.FileMode, error) {
 	}
 	data, err := io.ReadAll(file)
 	return data, info.Mode().Perm(), err
+}
+
+func windowsExtendedPath(path string) string {
+	if strings.HasPrefix(path, `\\?\`) || !filepath.IsAbs(path) {
+		return path
+	}
+	if strings.HasPrefix(path, `\\`) {
+		return `\\?\UNC\` + strings.TrimPrefix(path, `\\`)
+	}
+	return `\\?\` + path
 }

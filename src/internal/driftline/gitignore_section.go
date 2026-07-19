@@ -12,6 +12,7 @@ const (
 	gitIgnoreContractTail = "/" + ContractPath
 	gitIgnoreWarning      = "# DO NOT EDIT: this section is managed automatically by driftline."
 	gitIgnoreEndMarker    = "# end driftline"
+	gitIgnoreMarkerRepair = " Repair the driftline markers in .gitignore manually."
 )
 
 func gitIgnoreStartRepository(line []byte) (string, bool) {
@@ -143,21 +144,21 @@ func parseGitIgnoreSection(current []byte) (gitIgnoreSection, error) {
 		lineStart = spanEnd
 	}
 
-	const errorPrefix = "invalid driftline section in .gitignore: "
 	if len(starts) == 0 && len(ends) == 0 {
 		return gitIgnoreSection{}, nil
 	}
 	if len(starts) == 1 && len(ends) == 0 {
-		return gitIgnoreSection{}, fmt.Errorf("%sstart marker has no matching end marker", errorPrefix)
+		return gitIgnoreSection{}, invalidGitIgnoreSectionError("start marker has no matching end marker")
 	}
 	if len(starts) == 0 && len(ends) == 1 {
-		return gitIgnoreSection{}, fmt.Errorf("%send marker has no matching start marker", errorPrefix)
+		return gitIgnoreSection{}, invalidGitIgnoreSectionError("end marker has no matching start marker")
 	}
 	if len(starts) != 1 || len(ends) != 1 {
-		return gitIgnoreSection{}, fmt.Errorf("%sfound %d start markers and %d end markers; expected exactly one of each", errorPrefix, len(starts), len(ends))
+		problem := fmt.Sprintf("found %d start markers and %d end markers; expected exactly one of each", len(starts), len(ends))
+		return gitIgnoreSection{}, invalidGitIgnoreSectionError(problem)
 	}
 	if ends[0].start < starts[0].start {
-		return gitIgnoreSection{}, fmt.Errorf("%send marker appears before start marker", errorPrefix)
+		return gitIgnoreSection{}, invalidGitIgnoreSectionError("end marker appears before start marker")
 	}
 
 	return gitIgnoreSection{
@@ -166,6 +167,10 @@ func parseGitIgnoreSection(current []byte) (gitIgnoreSection, error) {
 		end:       ends[0].end,
 		delimiter: starts[0].delimiter,
 	}, nil
+}
+
+func invalidGitIgnoreSectionError(problem string) error {
+	return fmt.Errorf("invalid driftline section in .gitignore: %s%s", problem, gitIgnoreMarkerRepair)
 }
 
 func renderGitIgnoreSection(repository string, entries []string, delimiter []byte) []byte {

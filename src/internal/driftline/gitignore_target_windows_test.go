@@ -9,6 +9,28 @@ import (
 	"testing"
 )
 
+func TestWindowsExtendedPath(t *testing.T) {
+	tests := []struct {
+		name string
+		path string
+		want string
+	}{
+		{name: "drive absolute", path: `C:\repository\.gitignore`, want: `\\?\C:\repository\.gitignore`},
+		{name: "UNC", path: `\\server\share\repository\.gitignore`, want: `\\?\UNC\server\share\repository\.gitignore`},
+		{name: "extended drive", path: `\\?\C:\repository\.gitignore`, want: `\\?\C:\repository\.gitignore`},
+		{name: "extended UNC", path: `\\?\UNC\server\share\repository\.gitignore`, want: `\\?\UNC\server\share\repository\.gitignore`},
+		{name: "relative", path: `repository\.gitignore`, want: `repository\.gitignore`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := windowsExtendedPath(tt.path); got != tt.want {
+				t.Fatalf("windowsExtendedPath(%q) = %q, want %q", tt.path, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestPrepareGitIgnoreRewriteFailsClosedBeforeCreatingTemp(t *testing.T) {
 	if err := validateAtomicGitIgnoreReplacement(); err == nil || !strings.Contains(err.Error(), "unsupported on windows") {
 		t.Fatalf("expected Windows atomic replacement rejection, got %v", err)
@@ -104,5 +126,28 @@ func TestReadRegularFileNoFollowRejectsFinalReparsePoint(t *testing.T) {
 	}
 	if len(got) != 0 {
 		t.Fatalf("final reparse-point bytes must not be read: %q", got)
+	}
+}
+
+func TestReadRegularFileNoFollowReadsLongRegularPath(t *testing.T) {
+	dir := t.TempDir()
+	for len(filepath.Join(dir, GitIgnorePath)) <= 300 {
+		dir = filepath.Join(dir, "long-path-segment-0123456789abcdef")
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Skipf("cannot create long Windows path: %v", err)
+	}
+	targetPath := filepath.Join(dir, GitIgnorePath)
+	want := []byte("long path bytes\n")
+	if err := os.WriteFile(targetPath, want, 0o600); err != nil {
+		t.Skipf("cannot write long Windows path: %v", err)
+	}
+
+	got, _, err := readRegularFileNoFollow(targetPath)
+	if err != nil {
+		t.Fatalf("read long regular path: %v", err)
+	}
+	if string(got) != string(want) {
+		t.Fatalf("long regular path bytes = %q, want %q", got, want)
 	}
 }
