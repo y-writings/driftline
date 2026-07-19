@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -727,7 +728,7 @@ entries = [".env"]
 }
 
 func TestBuildPlanRejectsNonRegularGitIgnoreWithActiveConfig(t *testing.T) {
-	for _, state := range []string{"directory", "live symlink", "broken symlink"} {
+	for _, state := range []string{"directory", "live symlink", "broken symlink", "FIFO"} {
 		t.Run(state, func(t *testing.T) {
 			targetDir := t.TempDir()
 			writePlanFile(t, targetDir, SyncManifestPath, syncManifestTOML(""))
@@ -755,7 +756,7 @@ func TestBuildPlanIgnoresNonRegularGitIgnoreWithInactiveConfig(t *testing.T) {
 		{name: "empty", contract: "version = 2\n\n[gitignore]\nentries = []\n"},
 	}
 	for _, config := range configs {
-		for _, state := range []string{"directory", "live symlink", "broken symlink"} {
+		for _, state := range []string{"directory", "live symlink", "broken symlink", "FIFO"} {
 			t.Run(config.name+"/"+state, func(t *testing.T) {
 				targetDir := t.TempDir()
 				writePlanFile(t, targetDir, SyncManifestPath, syncManifestTOML(""))
@@ -920,6 +921,10 @@ func setPlanGitIgnoreTargetState(t *testing.T, root string, state string) {
 		}
 	case "broken symlink":
 		if err := os.Symlink("missing-gitignore", targetPath); err != nil {
+			t.Fatal(err)
+		}
+	case "FIFO":
+		if err := syscall.Mkfifo(targetPath, 0o600); err != nil {
 			t.Fatal(err)
 		}
 	default:
