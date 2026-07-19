@@ -271,7 +271,8 @@ func TestTargetRepositoryApplyPreparesSyncBeforeGitIgnore(t *testing.T) {
 		NextSyncManifest: SyncManifest{Version: 2, Source: SyncSource{Repository: "y-writings/source-repo", Ref: "main"}},
 	}
 	repository := TargetRepository{
-		Root: targetDir,
+		Root:                               targetDir,
+		validateAtomicGitIgnoreReplacement: func() error { return nil },
 		prepareGitIgnoreRewrite: func(GitIgnoreSectionChange) (func() error, func() error, error) {
 			preparedGitIgnore = true
 			return nil, nil, errors.New("Gitignore preparation should not run")
@@ -419,7 +420,8 @@ func TestTargetRepositoryApplyGitIgnorePreparationFailurePrecedesManagedMutation
 		GitIgnore: &GitIgnoreSectionChange{TargetPath: filepath.Join(targetDir, GitIgnorePath), TargetMissing: true, DesiredBytes: []byte("generated\n")},
 	}
 	repository := TargetRepository{
-		Root: targetDir,
+		Root:                               targetDir,
+		validateAtomicGitIgnoreReplacement: func() error { return nil },
 		prepareGitIgnoreRewrite: func(GitIgnoreSectionChange) (func() error, func() error, error) {
 			return nil, nil, injected
 		},
@@ -440,7 +442,8 @@ func TestTargetRepositoryApplyGitIgnorePreparationFailurePrecedesManagedMutation
 func TestTargetRepositoryApplySurfacesGitIgnoreCleanupFailure(t *testing.T) {
 	cleanupErr := errors.New("injected Gitignore cleanup failure")
 	repository := TargetRepository{
-		Root: t.TempDir(),
+		Root:                               t.TempDir(),
+		validateAtomicGitIgnoreReplacement: func() error { return nil },
 		prepareGitIgnoreRewrite: func(GitIgnoreSectionChange) (func() error, func() error, error) {
 			return func() error { return nil }, func() error { return cleanupErr }, nil
 		},
@@ -469,7 +472,8 @@ func TestTargetRepositoryApplyJoinsCommitAndBothCleanupFailures(t *testing.T) {
 		GitIgnore: &GitIgnoreSectionChange{},
 	}
 	repository := TargetRepository{
-		Root: root,
+		Root:                               root,
+		validateAtomicGitIgnoreReplacement: func() error { return nil },
 		prepareSyncManifestRewrite: func(string, SyncManifest) (func() error, func() error, error) {
 			return func() error {
 				syncCommitted = true
@@ -515,7 +519,8 @@ func TestTargetRepositoryApplyGitIgnoreCommitFailureLeavesManagedWriteButNotSync
 		NextSyncManifest: SyncManifest{Version: 2, Source: SyncSource{Repository: "y-writings/source-repo", Ref: "main"}, Files: map[string]map[string]string{"tool": {"config": "managed.txt"}}},
 	}
 	repository := TargetRepository{
-		Root: targetDir,
+		Root:                               targetDir,
+		validateAtomicGitIgnoreReplacement: func() error { return nil },
 		prepareGitIgnoreRewrite: func(GitIgnoreSectionChange) (func() error, func() error, error) {
 			return func() error { return injected }, func() error { return nil }, nil
 		},
