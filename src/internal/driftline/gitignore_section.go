@@ -103,7 +103,7 @@ func transformGitIgnoreSection(current []byte, targetMissing bool, repository st
 	desired := appendGitIgnoreSection(current, generated, delimiter)
 	return gitIgnoreTransform{
 		Changed:      true,
-		Status:       StatusUpdate,
+		Status:       StatusAdd,
 		Reason:       "generated section is missing",
 		DesiredBytes: desired,
 	}, nil
@@ -194,9 +194,7 @@ func firstGitIgnoreDelimiter(current []byte) []byte {
 
 func appendGitIgnoreSection(current []byte, generated []byte, delimiter []byte) []byte {
 	desired := append([]byte(nil), current...)
-	if len(current) == 0 {
-		desired = append(desired, delimiter...)
-	} else if !endsWithEmptyGitIgnoreLine(current) {
+	if len(current) > 0 && !endsWithEmptyGitIgnoreLine(current) {
 		if current[len(current)-1] != '\n' {
 			desired = append(desired, delimiter...)
 		}

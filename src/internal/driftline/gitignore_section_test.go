@@ -28,7 +28,7 @@ func TestTransformGitIgnoreSectionAppendsWithoutDeduplicatingOutsideEntries(t *t
 	}
 
 	want := append(append([]byte(nil), current...), []byte("\n"+generatedGitIgnoreBlockLF)...)
-	requireGitIgnoreTransform(t, got, true, StatusUpdate, "generated section is missing", want)
+	requireGitIgnoreTransform(t, got, true, StatusAdd, "generated section is missing", want)
 }
 
 func TestTransformGitIgnoreSectionAddsOnlyEnoughSeparatorLines(t *testing.T) {
@@ -37,7 +37,7 @@ func TestTransformGitIgnoreSectionAddsOnlyEnoughSeparatorLines(t *testing.T) {
 		current string
 		want    string
 	}{
-		{name: "empty existing file", current: "", want: "\n" + generatedGitIgnoreBlockLF},
+		{name: "empty existing file", current: "", want: generatedGitIgnoreBlockLF},
 		{name: "unterminated content", current: "cache", want: "cache\n\n" + generatedGitIgnoreBlockLF},
 		{name: "terminated content", current: "cache\n", want: "cache\n\n" + generatedGitIgnoreBlockLF},
 		{name: "whitespace-only line is not empty", current: "cache\n  \n", want: "cache\n  \n\n" + generatedGitIgnoreBlockLF},
@@ -51,7 +51,7 @@ func TestTransformGitIgnoreSectionAddsOnlyEnoughSeparatorLines(t *testing.T) {
 			if err != nil {
 				t.Fatalf("transform .gitignore: %v", err)
 			}
-			requireGitIgnoreTransform(t, got, true, StatusUpdate, "generated section is missing", []byte(tt.want))
+			requireGitIgnoreTransform(t, got, true, StatusAdd, "generated section is missing", []byte(tt.want))
 		})
 	}
 }
@@ -153,7 +153,7 @@ func TestTransformGitIgnoreSectionUsesFirstDelimiterWhenAppendingMixedFile(t *te
 		"# DO NOT EDIT: this section is managed automatically by driftline.\r\n" +
 		".env\r\n" +
 		"# end driftline\r\n")
-	requireGitIgnoreTransform(t, got, true, StatusUpdate, "generated section is missing", want)
+	requireGitIgnoreTransform(t, got, true, StatusAdd, "generated section is missing", want)
 }
 
 func TestTransformGitIgnoreSectionReplacesFinalBlockWithoutDelimiter(t *testing.T) {
@@ -204,7 +204,7 @@ func TestTransformGitIgnoreSectionPreservesInvalidUTF8(t *testing.T) {
 	}
 
 	want := append(append([]byte(nil), current...), []byte("\n"+generatedGitIgnoreBlockLF)...)
-	requireGitIgnoreTransform(t, got, true, StatusUpdate, "generated section is missing", want)
+	requireGitIgnoreTransform(t, got, true, StatusAdd, "generated section is missing", want)
 }
 
 func TestTransformGitIgnoreSectionRejectsMalformedMarkersBeforeConfigDecision(t *testing.T) {
@@ -249,7 +249,7 @@ func TestTransformGitIgnoreSectionPreservesNearMissMarkersWhenAppending(t *testi
 	}
 
 	want := append(append([]byte(nil), current...), []byte("\n"+generatedGitIgnoreBlockLF)...)
-	requireGitIgnoreTransform(t, got, true, StatusUpdate, "generated section is missing", want)
+	requireGitIgnoreTransform(t, got, true, StatusAdd, "generated section is missing", want)
 }
 
 func requireGitIgnoreTransform(t *testing.T, got gitIgnoreTransform, wantChanged bool, wantStatus Status, wantReason string, wantBytes []byte) {
