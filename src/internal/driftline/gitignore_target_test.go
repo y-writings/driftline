@@ -14,6 +14,10 @@ func TestReadRegularFileNoFollowReadsOpenedRegularFile(t *testing.T) {
 	if err := os.WriteFile(targetPath, want, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	info, err := os.Lstat(targetPath)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	got, mode, err := readRegularFileNoFollow(targetPath)
 	if err != nil {
@@ -22,7 +26,7 @@ func TestReadRegularFileNoFollowReadsOpenedRegularFile(t *testing.T) {
 	if string(got) != string(want) {
 		t.Fatalf("read bytes = %q, want %q", got, want)
 	}
-	if mode != 0o600 {
-		t.Fatalf("read mode = %#o, want 0600", mode)
+	if mode != info.Mode().Perm() {
+		t.Fatalf("read mode = %#o, want observed mode %#o", mode, info.Mode().Perm())
 	}
 }

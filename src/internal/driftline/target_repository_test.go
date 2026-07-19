@@ -275,6 +275,8 @@ config = "old.txt"
 }
 
 func TestTargetRepositoryApplyRejectsStaleGitIgnoreBeforeManagedMutation(t *testing.T) {
+	requireAtomicGitIgnoreReplacement(t)
+
 	targetDir := t.TempDir()
 	originalSyncManifest := syncManifestTOMLForApplyTest(`[files.old]
 config = "old.txt"
@@ -349,6 +351,64 @@ func TestTargetRepositoryApplyGitIgnorePreparationFailurePrecedesManagedMutation
 	}
 }
 
+func TestTargetRepositoryApplySurfacesGitIgnoreCleanupFailure(t *testing.T) {
+	cleanupErr := errors.New("injected Gitignore cleanup failure")
+	repository := TargetRepository{
+		Root: t.TempDir(),
+		prepareGitIgnoreRewrite: func(GitIgnoreSectionChange) (func() error, func() error, error) {
+			return func() error { return nil }, func() error { return cleanupErr }, nil
+		},
+	}
+	plan := Plan{GitIgnore: &GitIgnoreSectionChange{}}
+
+	err := repository.Apply(plan)
+	if !errors.Is(err, cleanupErr) {
+		t.Fatalf("Apply error = %v, want cleanup error %v", err, cleanupErr)
+	}
+}
+
+func TestTargetRepositoryApplyJoinsCommitAndBothCleanupFailures(t *testing.T) {
+	root := t.TempDir()
+	managedPath := filepath.Join(root, "managed.txt")
+	writeTargetRepositoryTestFile(t, root, "managed.txt", "original\n")
+	commitErr := errors.New("injected Gitignore commit failure")
+	gitIgnoreCleanupErr := errors.New("injected Gitignore cleanup failure")
+	syncCleanupErr := errors.New("injected Sync cleanup failure")
+	syncCommitted := false
+	plan := Plan{
+		Changes: []Change{
+			{ID: "tool.config", Target: "managed.txt", Status: StatusSyncManifestAdd},
+			{ID: "tool.config", Target: "managed.txt", TargetPath: managedPath, SourceBytes: []byte("changed\n"), Status: StatusUpdate, WritesTarget: true},
+		},
+		GitIgnore: &GitIgnoreSectionChange{},
+	}
+	repository := TargetRepository{
+		Root: root,
+		prepareSyncManifestRewrite: func(string, SyncManifest) (func() error, func() error, error) {
+			return func() error {
+				syncCommitted = true
+				return nil
+			}, func() error { return syncCleanupErr }, nil
+		},
+		prepareGitIgnoreRewrite: func(GitIgnoreSectionChange) (func() error, func() error, error) {
+			return func() error { return commitErr }, func() error { return gitIgnoreCleanupErr }, nil
+		},
+	}
+
+	err := repository.Apply(plan)
+	for _, want := range []error{commitErr, gitIgnoreCleanupErr, syncCleanupErr} {
+		if !errors.Is(err, want) {
+			t.Fatalf("Apply error %v does not include %v", err, want)
+		}
+	}
+	if syncCommitted {
+		t.Fatal("Gitignore commit failure allowed Sync commit")
+	}
+	if got := readTargetRepositoryTestFile(t, root, "managed.txt"); got != "changed\n" {
+		t.Fatalf("Gitignore commit failure rolled back Managed write: %q", got)
+	}
+}
+
 func TestTargetRepositoryApplyGitIgnoreCommitFailureLeavesManagedWriteButNotSyncCommit(t *testing.T) {
 	targetDir := t.TempDir()
 	originalSyncManifest := syncManifestTOMLForApplyTest("")
@@ -370,12 +430,8 @@ func TestTargetRepositoryApplyGitIgnoreCommitFailureLeavesManagedWriteButNotSync
 	}
 	repository := TargetRepository{
 		Root: targetDir,
-		prepareGitIgnoreRewrite: func(change GitIgnoreSectionChange) (func() error, func() error, error) {
-			_, cleanup, err := PrepareGitIgnoreRewrite(change)
-			if err != nil {
-				return nil, nil, err
-			}
-			return func() error { return injected }, cleanup, nil
+		prepareGitIgnoreRewrite: func(GitIgnoreSectionChange) (func() error, func() error, error) {
+			return func() error { return injected }, func() error { return nil }, nil
 		},
 	}
 
@@ -395,6 +451,8 @@ func TestTargetRepositoryApplyGitIgnoreCommitFailureLeavesManagedWriteButNotSync
 }
 
 func TestTargetRepositoryApplyReplacesRemovedManagedGitIgnoreWithGeneratedSection(t *testing.T) {
+	requireAtomicGitIgnoreReplacement(t)
+
 	targetDir := t.TempDir()
 	writeTargetRepositoryTestFile(t, targetDir, SyncManifestPath, syncManifestTOMLForApplyTest(`[files.root]
 ignore = ".gitignore"
@@ -426,6 +484,8 @@ ignore = ".gitignore"
 }
 
 func TestTargetRepositoryApplyGitIgnoreOnlyDoesNotRewriteSyncManifest(t *testing.T) {
+	requireAtomicGitIgnoreReplacement(t)
+
 	targetDir := t.TempDir()
 	originalSyncManifest := `version = 2
 
@@ -450,6 +510,13 @@ repository = "y-writings/source-repo"
 	}
 	if got := readTargetRepositoryTestFile(t, targetDir, SyncManifestPath); got != originalSyncManifest {
 		t.Fatalf("Gitignore-only update rewrote Sync manifest:\n%s", got)
+	}
+}
+
+func requireAtomicGitIgnoreReplacement(t *testing.T) {
+	t.Helper()
+	if err := validateAtomicGitIgnoreReplacement(); err != nil {
+		t.Skip(err)
 	}
 }
 

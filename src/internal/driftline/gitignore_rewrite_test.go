@@ -1,3 +1,5 @@
+//go:build aix || android || darwin || dragonfly || freebsd || illumos || ios || linux || netbsd || openbsd || solaris
+
 package driftline
 
 import (
@@ -128,6 +130,85 @@ func TestPrepareGitIgnoreRewritePreservesRevalidationErrorCause(t *testing.T) {
 	assertNoGitIgnoreRewriteTemp(t, root)
 }
 
+func TestPrepareGitIgnoreRewriteJoinsWriteCloseAndRemoveFailures(t *testing.T) {
+	root := t.TempDir()
+	writeErr := errors.New("injected temp write failure")
+	closeErr := errors.New("injected temp close failure")
+	removeErr := errors.New("injected temp remove failure")
+	ops := gitIgnoreTempOperations{
+		write: func(*os.File, []byte) error {
+			return writeErr
+		},
+		close: func(file *os.File) error {
+			if err := file.Close(); err != nil {
+				t.Fatalf("close real temp descriptor: %v", err)
+			}
+			return closeErr
+		},
+		remove: func(path string) error {
+			if err := os.Remove(path); err != nil {
+				t.Fatalf("remove real temp file: %v", err)
+			}
+			return removeErr
+		},
+	}
+
+	commit, cleanup, err := prepareGitIgnoreRewriteWithOperations(GitIgnoreSectionChange{
+		TargetPath:    filepath.Join(root, GitIgnorePath),
+		TargetMissing: true,
+		DesiredBytes:  []byte("desired\n"),
+	}, ops)
+	if commit != nil || cleanup != nil {
+		t.Fatal("failed preparation returned commit or cleanup")
+	}
+	for _, want := range []error{writeErr, closeErr, removeErr} {
+		if !errors.Is(err, want) {
+			t.Fatalf("preparation error %v does not include %v", err, want)
+		}
+	}
+	assertNoGitIgnoreRewriteTemp(t, root)
+}
+
+func TestPrepareGitIgnoreRewriteCleanupSurfacesFailureAndRemainsIdempotent(t *testing.T) {
+	root := t.TempDir()
+	removeErr := errors.New("injected temp remove failure")
+	removeCalls := 0
+	ops := gitIgnoreTempOperations{
+		remove: func(path string) error {
+			removeCalls++
+			if removeCalls == 1 {
+				return removeErr
+			}
+			return os.Remove(path)
+		},
+	}
+
+	_, cleanup, err := prepareGitIgnoreRewriteWithOperations(GitIgnoreSectionChange{
+		TargetPath:    filepath.Join(root, GitIgnorePath),
+		TargetMissing: true,
+		DesiredBytes:  []byte("desired\n"),
+	}, ops)
+	if err != nil {
+		t.Fatalf("prepare rewrite: %v", err)
+	}
+	tempPath := singleGitIgnoreRewriteTemp(t, root)
+	if err := cleanup(); !errors.Is(err, removeErr) {
+		t.Fatalf("cleanup error = %v, want %v", err, removeErr)
+	}
+	if _, err := os.Lstat(tempPath); err != nil {
+		t.Fatalf("failed cleanup unexpectedly removed temp: %v", err)
+	}
+	if err := cleanup(); err != nil {
+		t.Fatalf("retry cleanup: %v", err)
+	}
+	if err := cleanup(); err != nil {
+		t.Fatalf("idempotent cleanup: %v", err)
+	}
+	if _, err := os.Lstat(tempPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("cleanup left temp: %v", err)
+	}
+}
+
 func TestPrepareGitIgnoreRewriteDefersAtomicReplacement(t *testing.T) {
 	root := t.TempDir()
 	targetPath := filepath.Join(root, GitIgnorePath)
@@ -219,6 +300,11 @@ func TestPrepareGitIgnoreRewritePreservesExistingMode(t *testing.T) {
 	if err := os.Chmod(targetPath, 0o640); err != nil {
 		t.Fatal(err)
 	}
+	before, err := os.Lstat(targetPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantMode := before.Mode().Perm()
 
 	commit, cleanup, err := PrepareGitIgnoreRewrite(GitIgnoreSectionChange{
 		TargetPath:    targetPath,
@@ -229,11 +315,11 @@ func TestPrepareGitIgnoreRewritePreservesExistingMode(t *testing.T) {
 		t.Fatalf("prepare rewrite: %v", err)
 	}
 	defer cleanup()
-	assertGitIgnoreRewriteMode(t, singleGitIgnoreRewriteTemp(t, root), 0o640)
+	assertGitIgnoreRewriteMode(t, singleGitIgnoreRewriteTemp(t, root), wantMode)
 	if err := commit(); err != nil {
 		t.Fatalf("commit rewrite: %v", err)
 	}
-	assertGitIgnoreRewriteMode(t, targetPath, 0o640)
+	assertGitIgnoreRewriteMode(t, targetPath, wantMode)
 }
 
 func TestPrepareGitIgnoreRewriteNewModeMatchesUmaskApplied0644(t *testing.T) {

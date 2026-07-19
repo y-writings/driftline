@@ -8,11 +8,12 @@ import (
 )
 
 type TargetRepository struct {
-	Root                    string
-	prepareGitIgnoreRewrite func(GitIgnoreSectionChange) (func() error, func() error, error)
+	Root                       string
+	prepareSyncManifestRewrite func(string, SyncManifest) (func() error, func() error, error)
+	prepareGitIgnoreRewrite    func(GitIgnoreSectionChange) (func() error, func() error, error)
 }
 
-func (r TargetRepository) Apply(plan Plan) error {
+func (r TargetRepository) Apply(plan Plan) (err error) {
 	if plan.HasConflicts() {
 		return fmt.Errorf("cannot apply conflicted sync plan")
 	}
@@ -23,11 +24,19 @@ func (r TargetRepository) Apply(plan Plan) error {
 
 	var commitSyncManifest func() error
 	if planHasSyncManifestChanges(plan.Changes) {
-		commit, cleanup, err := PrepareSyncManifestRewrite(root, plan.NextSyncManifest)
-		if err != nil {
-			return err
+		prepare := r.prepareSyncManifestRewrite
+		if prepare == nil {
+			prepare = PrepareSyncManifestRewrite
 		}
-		defer cleanup()
+		commit, cleanup, prepareErr := prepare(root, plan.NextSyncManifest)
+		if prepareErr != nil {
+			return prepareErr
+		}
+		defer func() {
+			if cleanupErr := cleanup(); cleanupErr != nil {
+				err = errors.Join(err, fmt.Errorf("cleanup Sync manifest rewrite: %w", cleanupErr))
+			}
+		}()
 		commitSyncManifest = commit
 	}
 
@@ -37,11 +46,15 @@ func (r TargetRepository) Apply(plan Plan) error {
 		if prepare == nil {
 			prepare = PrepareGitIgnoreRewrite
 		}
-		commit, cleanup, err := prepare(*plan.GitIgnore)
-		if err != nil {
-			return err
+		commit, cleanup, prepareErr := prepare(*plan.GitIgnore)
+		if prepareErr != nil {
+			return prepareErr
 		}
-		defer cleanup()
+		defer func() {
+			if cleanupErr := cleanup(); cleanupErr != nil {
+				err = errors.Join(err, fmt.Errorf("cleanup %s rewrite: %w", GitIgnorePath, cleanupErr))
+			}
+		}()
 		commitGitIgnore = commit
 	}
 

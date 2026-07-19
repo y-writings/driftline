@@ -11,6 +11,12 @@ import (
 
 var errOpenedTargetNotRegular = errors.New("opened target is not a regular file")
 
+type gitIgnoreTempOperations struct {
+	write  func(*os.File, []byte) error
+	close  func(*os.File) error
+	remove func(string) error
+}
+
 func planGitIgnoreSectionChange(targetDir string, repository string, config *ContractGitIgnore, replaceAfterManagedDelete bool) (*GitIgnoreSectionChange, error) {
 	targetPath, err := PathWithin(targetDir, GitIgnorePath, GitIgnorePath+" target")
 	if err != nil {
@@ -67,6 +73,26 @@ func planGitIgnoreSectionChange(targetDir string, repository string, config *Con
 }
 
 func PrepareGitIgnoreRewrite(change GitIgnoreSectionChange) (commit, cleanup func() error, err error) {
+	return prepareGitIgnoreRewriteWithOperations(change, gitIgnoreTempOperations{})
+}
+
+func prepareGitIgnoreRewriteWithOperations(change GitIgnoreSectionChange, ops gitIgnoreTempOperations) (commit, cleanup func() error, err error) {
+	if err := validateAtomicGitIgnoreReplacement(); err != nil {
+		return nil, nil, err
+	}
+	if ops.write == nil {
+		ops.write = func(file *os.File, data []byte) error {
+			_, err := file.Write(data)
+			return err
+		}
+	}
+	if ops.close == nil {
+		ops.close = (*os.File).Close
+	}
+	if ops.remove == nil {
+		ops.remove = os.Remove
+	}
+
 	mode := os.FileMode(0o644)
 	if change.TargetMissing {
 		_, err := os.Lstat(change.TargetPath)
@@ -93,16 +119,15 @@ func PrepareGitIgnoreRewrite(change GitIgnoreSectionChange) (commit, cleanup fun
 	}
 	tempName := temp.Name()
 	cleanup = func() error {
-		err := os.Remove(tempName)
+		err := ops.remove(tempName)
 		if errors.Is(err, os.ErrNotExist) {
 			return nil
 		}
-		return err
+		return gitIgnoreTempOperationError("remove", err)
 	}
-	fail := func(err error) (func() error, func() error, error) {
-		temp.Close()
-		_ = cleanup()
-		return nil, nil, err
+	fail := func(primary error) (func() error, func() error, error) {
+		closeErr := gitIgnoreTempOperationError("close", ops.close(temp))
+		return nil, nil, errors.Join(primary, closeErr, cleanup())
 	}
 
 	if !change.TargetMissing {
@@ -110,21 +135,27 @@ func PrepareGitIgnoreRewrite(change GitIgnoreSectionChange) (commit, cleanup fun
 			return fail(fmt.Errorf("chmod %s temp file: %w", GitIgnorePath, err))
 		}
 	}
-	if _, err := temp.Write(change.DesiredBytes); err != nil {
+	if err := ops.write(temp, change.DesiredBytes); err != nil {
 		return fail(fmt.Errorf("write %s temp file: %w", GitIgnorePath, err))
 	}
-	if err := temp.Close(); err != nil {
-		_ = cleanup()
-		return nil, nil, fmt.Errorf("close %s temp file: %w", GitIgnorePath, err)
+	if err := ops.close(temp); err != nil {
+		return nil, nil, errors.Join(gitIgnoreTempOperationError("close", err), cleanup())
 	}
 
 	commit = func() error {
-		if err := os.Rename(tempName, change.TargetPath); err != nil {
+		if err := commitAtomicGitIgnoreReplacement(tempName, change.TargetPath); err != nil {
 			return fmt.Errorf("commit %s rewrite: %w", GitIgnorePath, err)
 		}
 		return nil
 	}
 	return commit, cleanup, nil
+}
+
+func gitIgnoreTempOperationError(operation string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("%s %s temp file: %w", operation, GitIgnorePath, err)
 }
 
 func createGitIgnoreTemp(dir string) (*os.File, error) {
