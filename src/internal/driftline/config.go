@@ -25,6 +25,9 @@ func LoadContractBytes(data []byte) (Contract, error) {
 	if err != nil {
 		return contract, fmt.Errorf("parse Contract: %w", err)
 	}
+	if err := rejectContractGitIgnoreKeyAliases(metadata.Keys()); err != nil {
+		return contract, err
+	}
 	if err := rejectUndecoded("Contract", metadata.Undecoded()); err != nil {
 		return contract, err
 	}
@@ -145,6 +148,18 @@ func rejectUndecoded(label string, keys []toml.Key) error {
 	}
 	sort.Strings(formatted)
 	return fmt.Errorf("%s contains unknown key %q", label, formatted[0])
+}
+
+func rejectContractGitIgnoreKeyAliases(keys []toml.Key) error {
+	for _, key := range keys {
+		if strings.EqualFold(key[0], "gitignore") && key[0] != "gitignore" {
+			return rejectUndecoded("Contract", []toml.Key{key[:1]})
+		}
+		if len(key) > 1 && key[0] == "gitignore" && strings.EqualFold(key[1], "entries") && key[1] != "entries" {
+			return rejectUndecoded("Contract", []toml.Key{key[:2]})
+		}
+	}
+	return nil
 }
 
 func validateContract(contract Contract) error {

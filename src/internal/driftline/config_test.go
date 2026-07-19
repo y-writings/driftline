@@ -99,40 +99,146 @@ entries = []
 	}
 }
 
+func TestLoadContractRejectsGitIgnoreKeyAliases(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		wantErr string
+	}{
+		{
+			name: "noncanonical table missing entries",
+			input: `version = 2
+
+[GitIgnore]
+`,
+			wantErr: `Contract contains unknown key "GitIgnore"`,
+		},
+		{
+			name: "noncanonical table with entries",
+			input: `version = 2
+
+[GitIgnore]
+entries = []
+`,
+			wantErr: `Contract contains unknown key "GitIgnore"`,
+		},
+		{
+			name: "uppercase table",
+			input: `version = 2
+
+[GITIGNORE]
+entries = []
+`,
+			wantErr: `Contract contains unknown key "GITIGNORE"`,
+		},
+		{
+			name: "canonical and noncanonical tables",
+			input: `version = 2
+
+[gitignore]
+entries = ["canonical"]
+
+[GitIgnore]
+entries = ["alias"]
+`,
+			wantErr: `Contract contains unknown key "GitIgnore"`,
+		},
+		{
+			name: "noncanonical entries",
+			input: `version = 2
+
+[gitignore]
+Entries = []
+`,
+			wantErr: `Contract contains unknown key "gitignore.Entries"`,
+		},
+		{
+			name: "uppercase entries",
+			input: `version = 2
+
+[gitignore]
+ENTRIES = []
+`,
+			wantErr: `Contract contains unknown key "gitignore.ENTRIES"`,
+		},
+		{
+			name: "canonical and noncanonical entries",
+			input: `version = 2
+
+[gitignore]
+entries = ["canonical"]
+Entries = ["alias"]
+`,
+			wantErr: `Contract contains unknown key "gitignore.Entries"`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := LoadContractBytes([]byte(tt.input))
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("expected error containing %q, got %v", tt.wantErr, err)
+			}
+		})
+	}
+}
+
 func TestLoadContractRejectsInvalidGitIgnoreConfiguration(t *testing.T) {
-	for name, input := range map[string]string{
-		"missing entries": `version = 2
+	for name, tt := range map[string]struct {
+		input   string
+		wantErr string
+	}{
+		"missing entries": {
+			input: `version = 2
 
 [gitignore]
 `,
-		"unknown field": `version = 2
+			wantErr: "must define entries",
+		},
+		"unknown field": {
+			input: `version = 2
 
 [gitignore]
 entries = []
 unknown = true
 `,
-		"decoded multiline entry": `version = 2
+			wantErr: "contains unknown key",
+		},
+		"decoded multiline entry": {
+			input: `version = 2
 
 [gitignore]
 entries = ["""first
 second"""]
 `,
-		"entry containing CR": `version = 2
+			wantErr: "contains CR or LF",
+		},
+		"entry containing CR": {
+			input: `version = 2
 
 [gitignore]
 entries = ["first\rsecond"]
 `,
-		"end marker entry": `version = 2
+			wantErr: "contains CR or LF",
+		},
+		"end marker entry": {
+			input: `version = 2
 
 [gitignore]
 entries = ["# end driftline"]
 `,
-		"start marker entry": `version = 2
+			wantErr: "conflicts with a driftline marker",
+		},
+		"start marker entry": {
+			input: `version = 2
 
 [gitignore]
 entries = ["# start driftline from y-writings/source-repo/.driftline/contract.toml"]
 `,
-		"Managed exact path with empty entries": `version = 2
+			wantErr: "conflicts with a driftline marker",
+		},
+		"Managed exact path with empty entries": {
+			input: `version = 2
 
 [gitignore]
 entries = []
@@ -140,7 +246,32 @@ entries = []
 [files.root]
 ignore = { path = ".gitignore", mode = "managed" }
 `,
-		"Managed descendant with entries": `version = 2
+			wantErr: "cannot manage .gitignore",
+		},
+		"Managed normalized leading-dot exact path": {
+			input: `version = 2
+
+[gitignore]
+entries = []
+
+[files.root]
+ignore = { path = "./.gitignore", mode = "managed" }
+`,
+			wantErr: "cannot manage .gitignore",
+		},
+		"Managed normalized trailing-dot exact path": {
+			input: `version = 2
+
+[gitignore]
+entries = []
+
+[files.root]
+ignore = { path = ".gitignore/.", mode = "managed" }
+`,
+			wantErr: "cannot manage .gitignore",
+		},
+		"Managed descendant with entries": {
+			input: `version = 2
 
 [gitignore]
 entries = [".env"]
@@ -148,7 +279,21 @@ entries = [".env"]
 [files.root]
 ignore = { path = ".gitignore/rules", mode = "managed" }
 `,
-		"Template descendant with entries": `version = 2
+			wantErr: "cannot be below .gitignore",
+		},
+		"Managed normalized descendant with entries": {
+			input: `version = 2
+
+[gitignore]
+entries = [".env"]
+
+[files.root]
+ignore = { path = ".gitignore/./rules", mode = "managed" }
+`,
+			wantErr: "cannot be below .gitignore",
+		},
+		"Template descendant with entries": {
+			input: `version = 2
 
 [gitignore]
 entries = [".env"]
@@ -156,11 +301,24 @@ entries = [".env"]
 [files.root]
 ignore = { path = ".gitignore/rules", mode = "template" }
 `,
+			wantErr: "cannot be below .gitignore",
+		},
+		"Template normalized descendant with entries": {
+			input: `version = 2
+
+[gitignore]
+entries = [".env"]
+
+[files.root]
+ignore = { path = ".gitignore/./rules", mode = "template" }
+`,
+			wantErr: "cannot be below .gitignore",
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			_, err := LoadContractBytes([]byte(input))
-			if err == nil {
-				t.Fatal("expected validation error")
+			_, err := LoadContractBytes([]byte(tt.input))
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("expected error containing %q, got %v", tt.wantErr, err)
 			}
 		})
 	}
