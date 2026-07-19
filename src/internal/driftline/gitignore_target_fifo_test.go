@@ -14,13 +14,34 @@ func TestReadRegularFileNoFollowRejectsFIFO(t *testing.T) {
 	targetPath := filepath.Join(root, GitIgnorePath)
 	setPlanGitIgnoreFIFO(t, root)
 
-	got, err := readRegularFileNoFollow(targetPath)
+	got, _, err := readRegularFileNoFollow(targetPath)
 	if err == nil || !strings.Contains(err.Error(), "regular file") {
 		t.Fatalf("expected FIFO regular-file error, got bytes %q and error %v", got, err)
 	}
 	if len(got) != 0 {
 		t.Fatalf("FIFO bytes must not be read: %q", got)
 	}
+}
+
+func TestPrepareGitIgnoreRewriteRejectsRegularTargetReplacedByFIFO(t *testing.T) {
+	root := t.TempDir()
+	targetPath := filepath.Join(root, GitIgnorePath)
+	if err := syscall.Mkfifo(targetPath, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	commit, cleanup, err := PrepareGitIgnoreRewrite(GitIgnoreSectionChange{
+		TargetPath:    targetPath,
+		OriginalBytes: []byte("original\n"),
+		DesiredBytes:  []byte("generated\n"),
+	})
+	if err == nil || !strings.Contains(err.Error(), "stale") || !strings.Contains(err.Error(), "regular file") {
+		t.Fatalf("expected stale FIFO error, got %v", err)
+	}
+	if commit != nil || cleanup != nil {
+		t.Fatal("failed preparation returned commit or cleanup")
+	}
+	assertNoGitIgnoreRewriteTemp(t, root)
 }
 
 func TestBuildPlanRejectsFIFOGitIgnoreWithActiveConfig(t *testing.T) {

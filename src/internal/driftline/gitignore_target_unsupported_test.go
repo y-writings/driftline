@@ -8,7 +8,7 @@ import (
 )
 
 func TestReadRegularFileNoFollowReportsUnsupportedPlatform(t *testing.T) {
-	_, err := readRegularFileNoFollow(".gitignore")
+	_, _, err := readRegularFileNoFollow(".gitignore")
 	if err == nil || !strings.Contains(err.Error(), "unsupported") {
 		t.Fatalf("expected unsupported-platform error, got %v", err)
 	}

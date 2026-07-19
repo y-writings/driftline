@@ -8,10 +8,10 @@ import (
 	"syscall"
 )
 
-func readRegularFileNoFollow(path string) ([]byte, error) {
+func readRegularFileNoFollow(path string) ([]byte, os.FileMode, error) {
 	pathPtr, err := syscall.UTF16PtrFromString(path)
 	if err != nil {
-		return nil, &os.PathError{Op: "open", Path: path, Err: err}
+		return nil, 0, &os.PathError{Op: "open", Path: path, Err: err}
 	}
 	handle, err := syscall.CreateFile(
 		pathPtr,
@@ -23,23 +23,24 @@ func readRegularFileNoFollow(path string) ([]byte, error) {
 		0,
 	)
 	if err != nil {
-		return nil, &os.PathError{Op: "open", Path: path, Err: err}
+		return nil, 0, &os.PathError{Op: "open", Path: path, Err: err}
 	}
 
 	file := os.NewFile(uintptr(handle), path)
 	if file == nil {
 		syscall.CloseHandle(handle)
-		return nil, &os.PathError{Op: "open", Path: path, Err: syscall.EINVAL}
+		return nil, 0, &os.PathError{Op: "open", Path: path, Err: syscall.EINVAL}
 	}
 	defer file.Close()
 
 	info, err := file.Stat()
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	attributes, ok := info.Sys().(*syscall.Win32FileAttributeData)
 	if !ok || attributes.FileAttributes&syscall.FILE_ATTRIBUTE_REPARSE_POINT != 0 || !info.Mode().IsRegular() {
-		return nil, errOpenedTargetNotRegular
+		return nil, 0, errOpenedTargetNotRegular
 	}
-	return io.ReadAll(file)
+	data, err := io.ReadAll(file)
+	return data, info.Mode().Perm(), err
 }

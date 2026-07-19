@@ -8,7 +8,8 @@ import (
 )
 
 type TargetRepository struct {
-	Root string
+	Root                    string
+	prepareGitIgnoreRewrite func(GitIgnoreSectionChange) (func() error, func() error, error)
 }
 
 func (r TargetRepository) Apply(plan Plan) error {
@@ -30,6 +31,20 @@ func (r TargetRepository) Apply(plan Plan) error {
 		commitSyncManifest = commit
 	}
 
+	var commitGitIgnore func() error
+	if plan.GitIgnore != nil {
+		prepare := r.prepareGitIgnoreRewrite
+		if prepare == nil {
+			prepare = PrepareGitIgnoreRewrite
+		}
+		commit, cleanup, err := prepare(*plan.GitIgnore)
+		if err != nil {
+			return err
+		}
+		defer cleanup()
+		commitGitIgnore = commit
+	}
+
 	changes := SortedChanges(plan.Changes)
 	for _, change := range changes {
 		if change.Status == StatusRemove && change.DeletesTarget {
@@ -43,6 +58,11 @@ func (r TargetRepository) Apply(plan Plan) error {
 			if err := WriteFileBytes(change.TargetPath, change.SourceBytes); err != nil {
 				return err
 			}
+		}
+	}
+	if commitGitIgnore != nil {
+		if err := commitGitIgnore(); err != nil {
+			return err
 		}
 	}
 	if commitSyncManifest != nil {

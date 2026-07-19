@@ -15,11 +15,14 @@ func TestReadRegularFileNoFollowReadsOpenedRegularFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := readRegularFileNoFollow(targetPath)
+	got, mode, err := readRegularFileNoFollow(targetPath)
 	if err != nil {
 		t.Fatalf("read regular file without following: %v", err)
 	}
 	if string(got) != string(want) {
 		t.Fatalf("read bytes = %q, want %q", got, want)
+	}
+	if mode != 0o600 {
+		t.Fatalf("read mode = %#o, want 0600", mode)
 	}
 }

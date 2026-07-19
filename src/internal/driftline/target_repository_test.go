@@ -1,11 +1,38 @@
 package driftline
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestTargetRepositoryApplyRejectsConflictBeforeGitIgnorePreparation(t *testing.T) {
+	prepared := false
+	plan := Plan{
+		Changes: []Change{{ID: "tool.config", Status: StatusConflict}},
+		GitIgnore: &GitIgnoreSectionChange{
+			TargetPath:    filepath.Join(t.TempDir(), GitIgnorePath),
+			TargetMissing: true,
+			DesiredBytes:  []byte("generated\n"),
+		},
+	}
+	repository := TargetRepository{
+		Root: t.TempDir(),
+		prepareGitIgnoreRewrite: func(GitIgnoreSectionChange) (func() error, func() error, error) {
+			prepared = true
+			return nil, nil, errors.New("must not prepare")
+		},
+	}
+
+	if err := repository.Apply(plan); err == nil || !strings.Contains(err.Error(), "conflict") {
+		t.Fatalf("expected conflict error, got %v", err)
+	}
+	if prepared {
+		t.Fatal("conflicted plan prepared Gitignore rewrite")
+	}
+}
 
 func TestTargetRepositoryApplyRejectsConflictPlanBeforeWriting(t *testing.T) {
 	targetDir := t.TempDir()
@@ -102,6 +129,7 @@ ci = ".github/workflows/ci.yaml"
 `
 	writeTargetRepositoryTestFile(t, targetDir, SyncManifestPath, originalSyncManifest)
 	writeTargetRepositoryTestFile(t, targetDir, ".github/workflows/ci.yaml", "old\n")
+	writeTargetRepositoryTestFile(t, targetDir, GitIgnorePath, "target-owned\n")
 
 	plan := Plan{
 		Changes: []Change{
@@ -118,6 +146,9 @@ ci = ".github/workflows/ci.yaml"
 	}
 	if got := readTargetRepositoryTestFile(t, targetDir, SyncManifestPath); got != originalSyncManifest {
 		t.Fatalf("Sync manifest should not be rewritten for file-only update:\n%s", got)
+	}
+	if got := readTargetRepositoryTestFile(t, targetDir, GitIgnorePath); got != "target-owned\n" {
+		t.Fatalf("nil Gitignore plan changed existing target: %q", got)
 	}
 }
 
@@ -138,6 +169,35 @@ func TestTargetRepositoryApplyDoesNotCreateMissingSyncManifest(t *testing.T) {
 	}
 	if _, err := os.Stat(targetPath); !os.IsNotExist(err) {
 		t.Fatalf("managed target must not be written when Sync manifest rewrite cannot prepare, stat err=%v", err)
+	}
+}
+
+func TestTargetRepositoryApplyPreparesSyncBeforeGitIgnore(t *testing.T) {
+	targetDir := t.TempDir()
+	preparedGitIgnore := false
+	plan := Plan{
+		Changes: []Change{{ID: "tool.config", Target: "managed.txt", Status: StatusSyncManifestAdd}},
+		GitIgnore: &GitIgnoreSectionChange{
+			TargetPath:    filepath.Join(targetDir, GitIgnorePath),
+			TargetMissing: true,
+			DesiredBytes:  []byte("generated\n"),
+		},
+		NextSyncManifest: SyncManifest{Version: 2, Source: SyncSource{Repository: "y-writings/source-repo", Ref: "main"}},
+	}
+	repository := TargetRepository{
+		Root: targetDir,
+		prepareGitIgnoreRewrite: func(GitIgnoreSectionChange) (func() error, func() error, error) {
+			preparedGitIgnore = true
+			return nil, nil, errors.New("Gitignore preparation should not run")
+		},
+	}
+
+	err := repository.Apply(plan)
+	if err == nil || err.Error() != "Sync manifest not found: .driftline/sync.toml" {
+		t.Fatalf("expected Sync preparation error, got %v", err)
+	}
+	if preparedGitIgnore {
+		t.Fatal("Gitignore prepared before Sync manifest")
 	}
 }
 
@@ -211,6 +271,185 @@ config = "old.txt"
 				}
 			}
 		})
+	}
+}
+
+func TestTargetRepositoryApplyRejectsStaleGitIgnoreBeforeManagedMutation(t *testing.T) {
+	targetDir := t.TempDir()
+	originalSyncManifest := syncManifestTOMLForApplyTest(`[files.old]
+config = "old.txt"
+`)
+	writeTargetRepositoryTestFile(t, targetDir, SyncManifestPath, originalSyncManifest)
+	writeTargetRepositoryTestFile(t, targetDir, "old.txt", "old managed\n")
+	writeTargetRepositoryTestFile(t, targetDir, "managed.txt", "target-owned\n")
+	writeTargetRepositoryTestFile(t, targetDir, GitIgnorePath, "planned\n")
+
+	plan := Plan{
+		Changes: []Change{
+			{ID: "old.config", Target: "old.txt", TargetPath: filepath.Join(targetDir, "old.txt"), Status: StatusRemove, DeletesTarget: true},
+			{ID: "old.config", Target: "old.txt", Status: StatusSyncManifestRemove},
+			{ID: "tool.config", Target: "managed.txt", Status: StatusSyncManifestAdd},
+			{ID: "tool.config", Target: "managed.txt", TargetPath: filepath.Join(targetDir, "managed.txt"), SourceBytes: []byte("source\n"), Status: StatusUpdate, WritesTarget: true},
+		},
+		GitIgnore: &GitIgnoreSectionChange{
+			TargetPath:    filepath.Join(targetDir, GitIgnorePath),
+			OriginalBytes: []byte("planned\n"),
+			DesiredBytes:  []byte("generated\n"),
+		},
+		NextSyncManifest: SyncManifest{Version: 2, Source: SyncSource{Repository: "y-writings/source-repo", Ref: "main"}, Files: map[string]map[string]string{"tool": {"config": "managed.txt"}}},
+	}
+	writeTargetRepositoryTestFile(t, targetDir, GitIgnorePath, "stale\n")
+
+	err := (TargetRepository{Root: targetDir}).Apply(plan)
+	if err == nil || !strings.Contains(err.Error(), "stale") {
+		t.Fatalf("expected stale Gitignore error, got %v", err)
+	}
+	if got := readTargetRepositoryTestFile(t, targetDir, "old.txt"); got != "old managed\n" {
+		t.Fatalf("stale Gitignore preflight allowed Managed delete: %q", got)
+	}
+	if got := readTargetRepositoryTestFile(t, targetDir, "managed.txt"); got != "target-owned\n" {
+		t.Fatalf("stale Gitignore preflight allowed Managed write: %q", got)
+	}
+	if got := readTargetRepositoryTestFile(t, targetDir, SyncManifestPath); got != originalSyncManifest {
+		t.Fatalf("stale Gitignore preflight committed Sync manifest:\n%s", got)
+	}
+	if got := readTargetRepositoryTestFile(t, targetDir, GitIgnorePath); got != "stale\n" {
+		t.Fatalf("stale Gitignore was replaced: %q", got)
+	}
+}
+
+func TestTargetRepositoryApplyGitIgnorePreparationFailurePrecedesManagedMutation(t *testing.T) {
+	targetDir := t.TempDir()
+	writeTargetRepositoryTestFile(t, targetDir, "old.txt", "old managed\n")
+	writeTargetRepositoryTestFile(t, targetDir, "managed.txt", "target-owned\n")
+	injected := errors.New("injected Gitignore preparation failure")
+	plan := Plan{
+		Changes: []Change{
+			{ID: "old.config", TargetPath: filepath.Join(targetDir, "old.txt"), Status: StatusRemove, DeletesTarget: true},
+			{ID: "tool.config", TargetPath: filepath.Join(targetDir, "managed.txt"), SourceBytes: []byte("source\n"), Status: StatusUpdate, WritesTarget: true},
+		},
+		GitIgnore: &GitIgnoreSectionChange{TargetPath: filepath.Join(targetDir, GitIgnorePath), TargetMissing: true, DesiredBytes: []byte("generated\n")},
+	}
+	repository := TargetRepository{
+		Root: targetDir,
+		prepareGitIgnoreRewrite: func(GitIgnoreSectionChange) (func() error, func() error, error) {
+			return nil, nil, injected
+		},
+	}
+
+	err := repository.Apply(plan)
+	if !errors.Is(err, injected) {
+		t.Fatalf("expected injected preparation error, got %v", err)
+	}
+	if got := readTargetRepositoryTestFile(t, targetDir, "old.txt"); got != "old managed\n" {
+		t.Fatalf("preparation failure allowed Managed delete: %q", got)
+	}
+	if got := readTargetRepositoryTestFile(t, targetDir, "managed.txt"); got != "target-owned\n" {
+		t.Fatalf("preparation failure allowed Managed write: %q", got)
+	}
+}
+
+func TestTargetRepositoryApplyGitIgnoreCommitFailureLeavesManagedWriteButNotSyncCommit(t *testing.T) {
+	targetDir := t.TempDir()
+	originalSyncManifest := syncManifestTOMLForApplyTest("")
+	writeTargetRepositoryTestFile(t, targetDir, SyncManifestPath, originalSyncManifest)
+	writeTargetRepositoryTestFile(t, targetDir, "managed.txt", "old\n")
+	writeTargetRepositoryTestFile(t, targetDir, GitIgnorePath, "local\n")
+	injected := errors.New("injected Gitignore commit failure")
+	plan := Plan{
+		Changes: []Change{
+			{ID: "tool.config", Target: "managed.txt", Status: StatusSyncManifestAdd},
+			{ID: "tool.config", Target: "managed.txt", TargetPath: filepath.Join(targetDir, "managed.txt"), SourceBytes: []byte("source\n"), Status: StatusUpdate, WritesTarget: true},
+		},
+		GitIgnore: &GitIgnoreSectionChange{
+			TargetPath:    filepath.Join(targetDir, GitIgnorePath),
+			OriginalBytes: []byte("local\n"),
+			DesiredBytes:  []byte("generated\n"),
+		},
+		NextSyncManifest: SyncManifest{Version: 2, Source: SyncSource{Repository: "y-writings/source-repo", Ref: "main"}, Files: map[string]map[string]string{"tool": {"config": "managed.txt"}}},
+	}
+	repository := TargetRepository{
+		Root: targetDir,
+		prepareGitIgnoreRewrite: func(change GitIgnoreSectionChange) (func() error, func() error, error) {
+			_, cleanup, err := PrepareGitIgnoreRewrite(change)
+			if err != nil {
+				return nil, nil, err
+			}
+			return func() error { return injected }, cleanup, nil
+		},
+	}
+
+	err := repository.Apply(plan)
+	if !errors.Is(err, injected) {
+		t.Fatalf("expected injected commit error, got %v", err)
+	}
+	if got := readTargetRepositoryTestFile(t, targetDir, "managed.txt"); got != "source\n" {
+		t.Fatalf("existing no-rollback semantics lost Managed write: %q", got)
+	}
+	if got := readTargetRepositoryTestFile(t, targetDir, GitIgnorePath); got != "local\n" {
+		t.Fatalf("failed Gitignore commit changed target: %q", got)
+	}
+	if got := readTargetRepositoryTestFile(t, targetDir, SyncManifestPath); got != originalSyncManifest {
+		t.Fatalf("Gitignore commit failure still committed Sync manifest:\n%s", got)
+	}
+}
+
+func TestTargetRepositoryApplyReplacesRemovedManagedGitIgnoreWithGeneratedSection(t *testing.T) {
+	targetDir := t.TempDir()
+	writeTargetRepositoryTestFile(t, targetDir, SyncManifestPath, syncManifestTOMLForApplyTest(`[files.root]
+ignore = ".gitignore"
+`))
+	writeTargetRepositoryTestFile(t, targetDir, GitIgnorePath, "old managed bytes\n")
+	desired := []byte("# start driftline\n.env\n# end driftline\n")
+	plan := Plan{
+		Changes: []Change{
+			{ID: "root.ignore", Target: GitIgnorePath, TargetPath: filepath.Join(targetDir, GitIgnorePath), Status: StatusRemove, DeletesTarget: true},
+			{ID: "root.ignore", Target: GitIgnorePath, Status: StatusSyncManifestRemove},
+		},
+		GitIgnore: &GitIgnoreSectionChange{
+			TargetPath:    filepath.Join(targetDir, GitIgnorePath),
+			OriginalBytes: []byte("old managed bytes\n"),
+			DesiredBytes:  desired,
+		},
+		NextSyncManifest: SyncManifest{Version: 2, Source: SyncSource{Repository: "y-writings/source-repo", Ref: "main"}, Files: map[string]map[string]string{}},
+	}
+
+	if err := (TargetRepository{Root: targetDir}).Apply(plan); err != nil {
+		t.Fatalf("apply Managed-to-Gitignore transition: %v", err)
+	}
+	if got := readTargetRepositoryTestFile(t, targetDir, GitIgnorePath); got != string(desired) {
+		t.Fatalf("generated Gitignore bytes = %q, want %q", got, desired)
+	}
+	if got := readTargetRepositoryTestFile(t, targetDir, SyncManifestPath); strings.Contains(got, "root") || strings.Contains(got, "ignore") {
+		t.Fatalf("removed Managed owner remains in Sync manifest:\n%s", got)
+	}
+}
+
+func TestTargetRepositoryApplyGitIgnoreOnlyDoesNotRewriteSyncManifest(t *testing.T) {
+	targetDir := t.TempDir()
+	originalSyncManifest := `version = 2
+
+# keep target-side comments and order
+[source]
+ref = "main"
+repository = "y-writings/source-repo"
+`
+	writeTargetRepositoryTestFile(t, targetDir, SyncManifestPath, originalSyncManifest)
+	writeTargetRepositoryTestFile(t, targetDir, GitIgnorePath, "local\n")
+	plan := Plan{GitIgnore: &GitIgnoreSectionChange{
+		TargetPath:    filepath.Join(targetDir, GitIgnorePath),
+		OriginalBytes: []byte("local\n"),
+		DesiredBytes:  []byte("local\n\ngenerated\n"),
+	}}
+
+	if err := (TargetRepository{Root: targetDir}).Apply(plan); err != nil {
+		t.Fatalf("apply Gitignore-only update: %v", err)
+	}
+	if got := readTargetRepositoryTestFile(t, targetDir, GitIgnorePath); got != "local\n\ngenerated\n" {
+		t.Fatalf("Gitignore update = %q", got)
+	}
+	if got := readTargetRepositoryTestFile(t, targetDir, SyncManifestPath); got != originalSyncManifest {
+		t.Fatalf("Gitignore-only update rewrote Sync manifest:\n%s", got)
 	}
 }
 

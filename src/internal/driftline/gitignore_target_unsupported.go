@@ -4,9 +4,10 @@ package driftline
 
 import (
 	"fmt"
+	"os"
 	"runtime"
 )
 
-func readRegularFileNoFollow(string) ([]byte, error) {
-	return nil, fmt.Errorf("safe .gitignore target reads are unsupported on %s", runtime.GOOS)
+func readRegularFileNoFollow(string) ([]byte, os.FileMode, error) {
+	return nil, 0, fmt.Errorf("safe .gitignore target reads are unsupported on %s", runtime.GOOS)
 }

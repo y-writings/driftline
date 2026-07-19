@@ -8,19 +8,20 @@ import (
 	"syscall"
 )
 
-func readRegularFileNoFollow(path string) ([]byte, error) {
+func readRegularFileNoFollow(path string) ([]byte, os.FileMode, error) {
 	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer file.Close()
 
 	info, err := file.Stat()
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	if !info.Mode().IsRegular() {
-		return nil, errOpenedTargetNotRegular
+		return nil, 0, errOpenedTargetNotRegular
 	}
-	return io.ReadAll(file)
+	data, err := io.ReadAll(file)
+	return data, info.Mode().Perm(), err
 }

@@ -21,7 +21,7 @@ func TestReadRegularFileNoFollowRejectsFinalSymlink(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := readRegularFileNoFollow(targetPath)
+	got, _, err := readRegularFileNoFollow(targetPath)
 	if err == nil {
 		t.Fatalf("expected final symlink rejection, read %q", got)
 	}

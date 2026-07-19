@@ -19,7 +19,7 @@ func TestReadRegularFileNoFollowRejectsFinalReparsePoint(t *testing.T) {
 		t.Skipf("cannot create Windows symlink: %v", err)
 	}
 
-	got, err := readRegularFileNoFollow(targetPath)
+	got, _, err := readRegularFileNoFollow(targetPath)
 	if err == nil {
 		t.Fatalf("expected final reparse-point rejection, read %q", got)
 	}
