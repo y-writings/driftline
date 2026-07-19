@@ -2,6 +2,7 @@ package driftline
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -33,6 +34,135 @@ config = { path = ".mise/config.toml", mode = "template" }
 	config := contract.Files["mise"]["config"]
 	if config.Path != ".mise/config.toml" || config.Mode != ModeTemplate {
 		t.Fatalf("unexpected mise config entry: %#v", config)
+	}
+}
+
+func TestLoadContractGitIgnoreEntries(t *testing.T) {
+	contract, err := LoadContractBytes([]byte(`version = 2
+
+[gitignore]
+entries = [
+  "",
+  "  ",
+  ".env",
+  ".env",
+  " *.log ",
+  "!/dist/.gitkeep",
+  "# DO NOT EDIT: this section is managed automatically by driftline.",
+  "# start driftline from invalid/.driftline/contract.toml",
+]
+
+[files.root]
+ignore = { path = ".gitignore", mode = "template" }
+`))
+	if err != nil {
+		t.Fatalf("load Contract failed: %v", err)
+	}
+	if contract.Version != 2 {
+		t.Fatalf("unexpected version: %d", contract.Version)
+	}
+	if contract.GitIgnore == nil {
+		t.Fatal("expected gitignore configuration")
+	}
+	want := []string{
+		"",
+		"  ",
+		".env",
+		".env",
+		" *.log ",
+		"!/dist/.gitkeep",
+		"# DO NOT EDIT: this section is managed automatically by driftline.",
+		"# start driftline from invalid/.driftline/contract.toml",
+	}
+	if !slices.Equal(contract.GitIgnore.Entries, want) {
+		t.Fatalf("unexpected gitignore entries: %#v", contract.GitIgnore.Entries)
+	}
+	if got := contract.Files["root"]["ignore"]; got.Path != GitIgnorePath || got.Mode != ModeTemplate {
+		t.Fatalf("unexpected Template .gitignore entry: %#v", got)
+	}
+}
+
+func TestLoadContractGitIgnoreAcceptsExplicitEmptyEntries(t *testing.T) {
+	contract, err := LoadContractBytes([]byte(`version = 2
+
+[gitignore]
+entries = []
+`))
+	if err != nil {
+		t.Fatalf("load Contract failed: %v", err)
+	}
+	if contract.GitIgnore == nil {
+		t.Fatal("expected gitignore configuration")
+	}
+	if len(contract.GitIgnore.Entries) != 0 {
+		t.Fatalf("expected empty gitignore entries, got %#v", contract.GitIgnore.Entries)
+	}
+}
+
+func TestLoadContractRejectsInvalidGitIgnoreConfiguration(t *testing.T) {
+	for name, input := range map[string]string{
+		"missing entries": `version = 2
+
+[gitignore]
+`,
+		"unknown field": `version = 2
+
+[gitignore]
+entries = []
+unknown = true
+`,
+		"decoded multiline entry": `version = 2
+
+[gitignore]
+entries = ["""first
+second"""]
+`,
+		"entry containing CR": `version = 2
+
+[gitignore]
+entries = ["first\rsecond"]
+`,
+		"end marker entry": `version = 2
+
+[gitignore]
+entries = ["# end driftline"]
+`,
+		"start marker entry": `version = 2
+
+[gitignore]
+entries = ["# start driftline from y-writings/source-repo/.driftline/contract.toml"]
+`,
+		"Managed exact path with empty entries": `version = 2
+
+[gitignore]
+entries = []
+
+[files.root]
+ignore = { path = ".gitignore", mode = "managed" }
+`,
+		"Managed descendant with entries": `version = 2
+
+[gitignore]
+entries = [".env"]
+
+[files.root]
+ignore = { path = ".gitignore/rules", mode = "managed" }
+`,
+		"Template descendant with entries": `version = 2
+
+[gitignore]
+entries = [".env"]
+
+[files.root]
+ignore = { path = ".gitignore/rules", mode = "template" }
+`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := LoadContractBytes([]byte(input))
+			if err == nil {
+				t.Fatal("expected validation error")
+			}
+		})
 	}
 }
 

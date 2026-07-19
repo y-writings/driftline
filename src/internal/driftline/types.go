@@ -10,8 +10,13 @@ const (
 )
 
 type Contract struct {
-	Version int                                `toml:"version"`
-	Files   map[string]map[string]ContractFile `toml:"files"`
+	Version   int                                `toml:"version"`
+	GitIgnore *ContractGitIgnore                 `toml:"gitignore"`
+	Files     map[string]map[string]ContractFile `toml:"files"`
+}
+
+type ContractGitIgnore struct {
+	Entries []string `toml:"entries"`
 }
 
 type ContractFile struct {
