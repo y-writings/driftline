@@ -117,8 +117,7 @@ func (b planBuilder) build() (Plan, error) {
 	gitIgnoreOwnerRemoved := gitIgnoreCurrentlyManaged && !gitIgnoreOwnerStillDeclared
 	gitIgnoreOwnerChangedToTemplate := gitIgnoreCurrentlyManaged &&
 		gitIgnoreOwnerStillDeclared &&
-		gitIgnoreOwner.Mode == ModeTemplate &&
-		gitIgnoreOwner.Path == GitIgnorePath
+		gitIgnoreOwner.Mode == ModeTemplate
 	gitIgnoreEntriesConfigured := b.contract.GitIgnore != nil && len(b.contract.GitIgnore.Entries) > 0
 
 	plan := Plan{

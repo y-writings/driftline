@@ -1040,6 +1040,64 @@ ignore = { path = "./.gitignore", mode = "template" }
 	}
 }
 
+func TestBuildPlanManagedToRenamedTemplateGitIgnoreUsesCurrentBytesForSection(t *testing.T) {
+	tests := []struct {
+		name       string
+		current    string
+		wantStatus Status
+		want       string
+	}{
+		{
+			name:       "append",
+			current:    "local-only\n",
+			wantStatus: StatusAdd,
+			want:       "local-only\n\n" + planGitIgnoreBlock("y-writings/source-repo", ".env"),
+		},
+		{
+			name:       "replace",
+			current:    planGitIgnoreBlock("old/repo", "old-entry"),
+			wantStatus: StatusUpdate,
+			want:       planGitIgnoreBlock("y-writings/source-repo", ".env"),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			targetDir := t.TempDir()
+			writePlanFile(t, targetDir, SyncManifestPath, syncManifestTOML(`[files.tool]
+ignore = ".gitignore"
+`))
+			writePlanFile(t, targetDir, GitIgnorePath, tt.current)
+			client := newPlanSourceClient(`version = 2
+
+[gitignore]
+entries = [".env"]
+
+[files.tool]
+ignore = { path = "templates/ignore", mode = "template" }
+`, nil)
+
+			plan, err := BuildPlan(PlanOptions{TargetDir: targetDir, Source: client})
+			if err != nil {
+				t.Fatalf("build plan failed: %v", err)
+			}
+
+			transition := planChange(t, plan, StatusModeTransition, "tool.ignore")
+			if transition.Target != GitIgnorePath || transition.WritesTarget || transition.DeletesTarget {
+				t.Fatalf("Managed-to-Template transition must leave the former target for section planning: %#v", transition)
+			}
+			assertPlanHasChange(t, plan, StatusSyncManifestRemove, "tool.ignore", "remove Sync manifest entry")
+			change := plan.GitIgnore
+			if change == nil || change.Status != tt.wantStatus || change.TargetMissing {
+				t.Fatalf("unexpected dedicated section change: %#v", change)
+			}
+			if string(change.OriginalBytes) != tt.current || string(change.DesiredBytes) != tt.want {
+				t.Fatalf("dedicated change did not transform former target bytes: %#v", change)
+			}
+		})
+	}
+}
+
 func TestBuildPlanManagedToTemplateGitIgnoreWithInactiveConfigSkipsSectionPlanning(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -1078,6 +1136,53 @@ ignore = ".gitignore"
 			writePlanFile(t, targetDir, GitIgnorePath, tt.current)
 
 			plan, err := BuildPlan(PlanOptions{TargetDir: targetDir, Source: newPlanSourceClient(tt.contract, nil)})
+			if err != nil {
+				t.Fatalf("build plan failed: %v", err)
+			}
+
+			transition := planChange(t, plan, StatusModeTransition, "tool.ignore")
+			if transition.Target != GitIgnorePath || transition.WritesTarget || transition.DeletesTarget {
+				t.Fatalf("unexpected Managed-to-Template transition: %#v", transition)
+			}
+			assertPlanHasChange(t, plan, StatusSyncManifestRemove, "tool.ignore", "remove Sync manifest entry")
+			if plan.GitIgnore != nil {
+				t.Fatalf("inactive config must leave former Managed bytes untouched: %#v", plan.GitIgnore)
+			}
+		})
+	}
+}
+
+func TestBuildPlanManagedToRenamedTemplateGitIgnoreWithInactiveConfigSkipsSectionPlanning(t *testing.T) {
+	tests := []struct {
+		name            string
+		gitIgnoreConfig string
+		current         string
+	}{
+		{
+			name:            "absent config leaves valid section untouched",
+			gitIgnoreConfig: "",
+			current:         planGitIgnoreBlock("old/repo", "old-entry"),
+		},
+		{
+			name:            "explicit empty config does not scan malformed marker",
+			gitIgnoreConfig: "\n[gitignore]\nentries = []\n",
+			current:         "# start driftline from old/repo/" + ContractPath + "\nunterminated\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			targetDir := t.TempDir()
+			writePlanFile(t, targetDir, SyncManifestPath, syncManifestTOML(`[files.tool]
+ignore = ".gitignore"
+`))
+			writePlanFile(t, targetDir, GitIgnorePath, tt.current)
+			contract := "version = 2\n" + tt.gitIgnoreConfig + `
+[files.tool]
+ignore = { path = "templates/ignore", mode = "template" }
+`
+
+			plan, err := BuildPlan(PlanOptions{TargetDir: targetDir, Source: newPlanSourceClient(contract, nil)})
 			if err != nil {
 				t.Fatalf("build plan failed: %v", err)
 			}
