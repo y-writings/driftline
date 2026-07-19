@@ -10,6 +10,7 @@ import (
 
 func TestTargetRepositoryApplyRejectsConflictBeforeGitIgnorePreparation(t *testing.T) {
 	prepared := false
+	validated := false
 	plan := Plan{
 		Changes: []Change{{ID: "tool.config", Status: StatusConflict}},
 		GitIgnore: &GitIgnoreSectionChange{
@@ -20,6 +21,10 @@ func TestTargetRepositoryApplyRejectsConflictBeforeGitIgnorePreparation(t *testi
 	}
 	repository := TargetRepository{
 		Root: t.TempDir(),
+		validateAtomicGitIgnoreReplacement: func() error {
+			validated = true
+			return errors.New("must not validate")
+		},
 		prepareGitIgnoreRewrite: func(GitIgnoreSectionChange) (func() error, func() error, error) {
 			prepared = true
 			return nil, nil, errors.New("must not prepare")
@@ -31,6 +36,87 @@ func TestTargetRepositoryApplyRejectsConflictBeforeGitIgnorePreparation(t *testi
 	}
 	if prepared {
 		t.Fatal("conflicted plan prepared Gitignore rewrite")
+	}
+	if validated {
+		t.Fatal("conflicted plan validated Gitignore replacement capability")
+	}
+}
+
+func TestTargetRepositoryApplyRejectsInjectedUnsupportedGitIgnoreBeforeSyncPreparation(t *testing.T) {
+	root := t.TempDir()
+	managedPath := filepath.Join(root, "managed.txt")
+	writeTargetRepositoryTestFile(t, root, "managed.txt", "original\n")
+	unsupportedErr := errors.New("injected unsupported atomic replacement")
+	syncPrepared := false
+	gitIgnorePrepared := false
+	plan := Plan{
+		Changes: []Change{
+			{ID: "tool.config", Target: "managed.txt", Status: StatusSyncManifestAdd},
+			{ID: "tool.config", Target: "managed.txt", TargetPath: managedPath, SourceBytes: []byte("changed\n"), Status: StatusUpdate, WritesTarget: true},
+		},
+		GitIgnore: &GitIgnoreSectionChange{TargetPath: filepath.Join(root, GitIgnorePath), TargetMissing: true},
+	}
+	repository := TargetRepository{
+		Root: root,
+		validateAtomicGitIgnoreReplacement: func() error {
+			return unsupportedErr
+		},
+		prepareSyncManifestRewrite: func(string, SyncManifest) (func() error, func() error, error) {
+			syncPrepared = true
+			if err := os.Mkdir(filepath.Join(root, MetadataDirectoryPath), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			return func() error { return nil }, func() error { return errors.New("injected cleanup failure") }, nil
+		},
+		prepareGitIgnoreRewrite: func(GitIgnoreSectionChange) (func() error, func() error, error) {
+			gitIgnorePrepared = true
+			return nil, nil, errors.New("must not prepare Gitignore")
+		},
+	}
+
+	err := repository.Apply(plan)
+	if !errors.Is(err, unsupportedErr) {
+		t.Fatalf("Apply error = %v, want unsupported error %v", err, unsupportedErr)
+	}
+	if syncPrepared || gitIgnorePrepared {
+		t.Fatalf("unsupported Apply prepared Sync=%v Gitignore=%v", syncPrepared, gitIgnorePrepared)
+	}
+	if _, err := os.Lstat(filepath.Join(root, MetadataDirectoryPath)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("unsupported Apply created Sync metadata: %v", err)
+	}
+	if got := readTargetRepositoryTestFile(t, root, "managed.txt"); got != "original\n" {
+		t.Fatalf("unsupported Apply changed Managed file: %q", got)
+	}
+}
+
+func TestTargetRepositoryApplyWithoutGitIgnoreSkipsAtomicCapabilityValidation(t *testing.T) {
+	root := t.TempDir()
+	managedPath := filepath.Join(root, "managed.txt")
+	writeTargetRepositoryTestFile(t, root, "managed.txt", "original\n")
+	validated := false
+	repository := TargetRepository{
+		Root: root,
+		validateAtomicGitIgnoreReplacement: func() error {
+			validated = true
+			return errors.New("must not validate")
+		},
+	}
+	plan := Plan{Changes: []Change{{
+		ID:           "tool.config",
+		TargetPath:   managedPath,
+		SourceBytes:  []byte("changed\n"),
+		Status:       StatusUpdate,
+		WritesTarget: true,
+	}}}
+
+	if err := repository.Apply(plan); err != nil {
+		t.Fatalf("Apply without Gitignore: %v", err)
+	}
+	if validated {
+		t.Fatal("Apply without Gitignore validated atomic replacement capability")
+	}
+	if got := readTargetRepositoryTestFile(t, root, "managed.txt"); got != "changed\n" {
+		t.Fatalf("Apply without Gitignore did not preserve behavior: %q", got)
 	}
 }
 

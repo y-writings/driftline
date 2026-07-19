@@ -8,14 +8,24 @@ import (
 )
 
 type TargetRepository struct {
-	Root                       string
-	prepareSyncManifestRewrite func(string, SyncManifest) (func() error, func() error, error)
-	prepareGitIgnoreRewrite    func(GitIgnoreSectionChange) (func() error, func() error, error)
+	Root                               string
+	validateAtomicGitIgnoreReplacement func() error
+	prepareSyncManifestRewrite         func(string, SyncManifest) (func() error, func() error, error)
+	prepareGitIgnoreRewrite            func(GitIgnoreSectionChange) (func() error, func() error, error)
 }
 
 func (r TargetRepository) Apply(plan Plan) (err error) {
 	if plan.HasConflicts() {
 		return fmt.Errorf("cannot apply conflicted sync plan")
+	}
+	if plan.GitIgnore != nil {
+		validate := r.validateAtomicGitIgnoreReplacement
+		if validate == nil {
+			validate = validateAtomicGitIgnoreReplacement
+		}
+		if err := validate(); err != nil {
+			return err
+		}
 	}
 	root := r.Root
 	if root == "" {

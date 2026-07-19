@@ -36,20 +36,23 @@ func TestPrepareGitIgnoreRewriteFailsClosedBeforeCreatingTemp(t *testing.T) {
 	}
 }
 
-func TestTargetRepositoryApplyRejectsUnsupportedGitIgnoreBeforeManagedWrite(t *testing.T) {
+func TestTargetRepositoryApplyRejectsUnsupportedGitIgnoreBeforeSyncPreparationOrManagedWrite(t *testing.T) {
 	root := t.TempDir()
 	managedPath := filepath.Join(root, "managed.txt")
 	if err := os.WriteFile(managedPath, []byte("original\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	plan := Plan{
-		Changes: []Change{{
-			ID:           "tool.config",
-			TargetPath:   managedPath,
-			SourceBytes:  []byte("changed\n"),
-			Status:       StatusUpdate,
-			WritesTarget: true,
-		}},
+		Changes: []Change{
+			{ID: "tool.config", Target: "managed.txt", Status: StatusSyncManifestAdd},
+			{
+				ID:           "tool.config",
+				TargetPath:   managedPath,
+				SourceBytes:  []byte("changed\n"),
+				Status:       StatusUpdate,
+				WritesTarget: true,
+			},
+		},
 		GitIgnore: &GitIgnoreSectionChange{
 			TargetPath:    filepath.Join(root, GitIgnorePath),
 			TargetMissing: true,
@@ -57,7 +60,15 @@ func TestTargetRepositoryApplyRejectsUnsupportedGitIgnoreBeforeManagedWrite(t *t
 		},
 	}
 
-	err := (TargetRepository{Root: root}).Apply(plan)
+	syncPrepared := false
+	repository := TargetRepository{
+		Root: root,
+		prepareSyncManifestRewrite: func(string, SyncManifest) (func() error, func() error, error) {
+			syncPrepared = true
+			return func() error { return nil }, func() error { return nil }, nil
+		},
+	}
+	err := repository.Apply(plan)
 	if err == nil || !strings.Contains(err.Error(), "atomic .gitignore replacement is unsupported on windows") {
 		t.Fatalf("expected unsupported atomic replacement error, got %v", err)
 	}
@@ -67,6 +78,12 @@ func TestTargetRepositoryApplyRejectsUnsupportedGitIgnoreBeforeManagedWrite(t *t
 	}
 	if string(data) != "original\n" {
 		t.Fatalf("unsupported Gitignore apply changed Managed file: %q", data)
+	}
+	if syncPrepared {
+		t.Fatal("unsupported Gitignore apply prepared Sync manifest")
+	}
+	if _, statErr := os.Lstat(filepath.Join(root, MetadataDirectoryPath)); !os.IsNotExist(statErr) {
+		t.Fatalf("unsupported Gitignore apply created Sync metadata: %v", statErr)
 	}
 }
 
