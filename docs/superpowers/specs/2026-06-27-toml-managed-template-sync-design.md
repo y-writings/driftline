@@ -85,7 +85,7 @@ Rules:
 - `mode` must be `managed` or `template`.
 - Unknown fields are invalid.
 - Duplicate normalized source paths are invalid.
-- Root `gitignore` behavior from the old YAML design is removed. If a source repository needs to provide `.gitignore`, define it as a normal managed or template file.
+- Root `gitignore` behavior from the old YAML design remains removed. Marker-scoped Contract `[gitignore]` behavior is defined separately by `2026-07-19-contract-gitignore-section-design.md`; it is not compatibility with the old append-only behavior.
 
 ## Sync Manifest
 

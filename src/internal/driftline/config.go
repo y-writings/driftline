@@ -25,8 +25,14 @@ func LoadContractBytes(data []byte) (Contract, error) {
 	if err != nil {
 		return contract, fmt.Errorf("parse Contract: %w", err)
 	}
+	if err := rejectContractGitIgnoreKeyAliases(metadata.Keys()); err != nil {
+		return contract, err
+	}
 	if err := rejectUndecoded("Contract", metadata.Undecoded()); err != nil {
 		return contract, err
+	}
+	if metadata.IsDefined("gitignore") && !metadata.IsDefined("gitignore", "entries") {
+		return contract, errors.New("Contract gitignore must define entries")
 	}
 	return contract, validateContract(contract)
 }
@@ -144,6 +150,18 @@ func rejectUndecoded(label string, keys []toml.Key) error {
 	return fmt.Errorf("%s contains unknown key %q", label, formatted[0])
 }
 
+func rejectContractGitIgnoreKeyAliases(keys []toml.Key) error {
+	for _, key := range keys {
+		if strings.EqualFold(key[0], "gitignore") && key[0] != "gitignore" {
+			return rejectUndecoded("Contract", []toml.Key{key[:1]})
+		}
+		if len(key) > 1 && key[0] == "gitignore" && strings.EqualFold(key[1], "entries") && key[1] != "entries" {
+			return rejectUndecoded("Contract", []toml.Key{key[:2]})
+		}
+	}
+	return nil
+}
+
 func validateContract(contract Contract) error {
 	if contract.Version != 2 {
 		return fmt.Errorf("unsupported Contract version %d", contract.Version)
@@ -182,6 +200,29 @@ func validateContract(contract Contract) error {
 			default:
 				return fmt.Errorf("source file %q has invalid mode %q", key, item.Mode)
 			}
+		}
+	}
+	return validateContractGitIgnore(contract)
+}
+
+func validateContractGitIgnore(contract Contract) error {
+	if contract.GitIgnore == nil {
+		return nil
+	}
+	for _, entry := range contract.GitIgnore.Entries {
+		if strings.ContainsAny(entry, "\r\n") {
+			return fmt.Errorf("gitignore entry contains CR or LF: %q", entry)
+		}
+		if entry == gitIgnoreEndMarker || isGitIgnoreStartMarker([]byte(entry)) {
+			return fmt.Errorf("gitignore entry conflicts with a driftline marker: %q", entry)
+		}
+	}
+	for _, entry := range ContractEntries(contract) {
+		if entry.Mode == ModeManaged && entry.Path == GitIgnorePath {
+			return fmt.Errorf("Contract file %q cannot manage %s while gitignore is configured", entry.Key, GitIgnorePath)
+		}
+		if len(contract.GitIgnore.Entries) > 0 && isPathAncestor(GitIgnorePath, entry.Path) {
+			return fmt.Errorf("Contract file %q path %q cannot be below %s while gitignore entries are configured", entry.Key, entry.Path, GitIgnorePath)
 		}
 	}
 	return nil

@@ -3,6 +3,7 @@ package commands
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -426,6 +427,79 @@ target = { path = ".driftline/example.toml", mode = "template" }
 	}
 }
 
+func TestInitPlacesTemplateGitIgnoreWithoutGeneratedSection(t *testing.T) {
+	targetDir := t.TempDir()
+	client := newCommandSourceClient("main", `version = 2
+
+[gitignore]
+entries = [".env", "/dist/"]
+
+[files.repository]
+ignore = { path = ".gitignore", mode = "template" }
+`, map[string]string{".gitignore": "# source template\n.env.local\n"})
+
+	var stdout, stderr bytes.Buffer
+	if err := (Runner{Source: client}).Run([]string{"init", "y-writings/source-repo", "--target-dir", targetDir}, &stdout, &stderr); err != nil {
+		t.Fatalf("init failed: %v\nstderr: %s", err, stderr.String())
+	}
+	if got, want := readFile(t, targetDir, ".gitignore"), "# source template\n.env.local\n"; got != want {
+		t.Fatalf("init should place only Template bytes: got %q, want %q", got, want)
+	}
+	if strings.Contains(readFile(t, targetDir, ".gitignore"), "# start driftline") {
+		t.Fatal("init must not add the generated Gitignore section")
+	}
+}
+
+func TestInitDoesNotInspectExistingGitIgnoreWithoutTemplateOperation(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		setup func(t *testing.T, targetDir string)
+		check func(t *testing.T, targetDir string)
+	}{
+		{
+			name: "malformed marker",
+			setup: func(t *testing.T, targetDir string) {
+				writeFile(t, targetDir, ".gitignore", "# start driftline from old/repo/.driftline/contract.toml\n.env\n")
+			},
+			check: func(t *testing.T, targetDir string) {
+				if got, want := readFile(t, targetDir, ".gitignore"), "# start driftline from old/repo/.driftline/contract.toml\n.env\n"; got != want {
+					t.Fatalf("init changed malformed target: got %q, want %q", got, want)
+				}
+			},
+		},
+		{
+			name: "nonregular target",
+			setup: func(t *testing.T, targetDir string) {
+				if err := os.Mkdir(filepath.Join(targetDir, ".gitignore"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			},
+			check: func(t *testing.T, targetDir string) {
+				info, err := os.Lstat(filepath.Join(targetDir, ".gitignore"))
+				if err != nil || !info.IsDir() {
+					t.Fatalf("init changed nonregular target: info=%#v err=%v", info, err)
+				}
+			},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			targetDir := t.TempDir()
+			tt.setup(t, targetDir)
+			client := newCommandSourceClient("main", `version = 2
+
+[gitignore]
+entries = [".env"]
+`, nil)
+
+			var stdout, stderr bytes.Buffer
+			if err := (Runner{Source: client}).Run([]string{"init", "y-writings/source-repo", "--target-dir", targetDir}, &stdout, &stderr); err != nil {
+				t.Fatalf("init should validate Contract without inspecting .gitignore: %v", err)
+			}
+			tt.check(t, targetDir)
+		})
+	}
+}
+
 func TestHelpReportsCurrentCommandsAndArtifacts(t *testing.T) {
 	runner := Runner{Source: commandFakeSourceClient{}}
 	var stdout, stderr bytes.Buffer
@@ -436,9 +510,9 @@ func TestHelpReportsCurrentCommandsAndArtifacts(t *testing.T) {
 
 commands:
   init owner/repo  create .driftline/sync.toml from a GitHub Source Repository
-  check            check whether target files match the Source Repository
-  diff             show diffs for files that would be added or updated
-  update           sync managed files and refresh .driftline/sync.toml
+  check            check Target Repository state against the Contract
+  diff             show planned content changes
+  update           reconcile Managed files, Gitignore section, and Sync manifest
 
 examples:
   driftline init owner/repo
@@ -514,6 +588,623 @@ ci = { path = ".github/workflows/ci.yaml", mode = "managed" }
 		t.Fatalf("Sync manifest was not updated:\n%s", manifest)
 	}
 	assertFileMissing(t, targetDir, ".gitignore")
+}
+
+func TestGitIgnoreSectionCommandLifecyclePreservesTargetOwnedDuplicate(t *testing.T) {
+	targetDir := t.TempDir()
+	syncManifest := syncManifestTOML("")
+	writeFile(t, targetDir, driftline.SyncManifestPath, syncManifest)
+	outside := "# target-owned\n.env\n"
+	writeFile(t, targetDir, ".gitignore", outside)
+	client := newCommandSourceClient("main", `version = 2
+
+[gitignore]
+entries = [".env", "/dist/"]
+`, nil)
+	runner := Runner{Source: client}
+
+	var stdout, stderr bytes.Buffer
+	err := runner.Run([]string{"check", "--target-dir", targetDir}, &stdout, &stderr)
+	if err != errDrift {
+		t.Fatalf("check should return drift, got %v", err)
+	}
+	if got, want := stdout.String(), "add gitignore: generated section is missing\n"; got != want {
+		t.Fatalf("unexpected check output: got %q, want %q", got, want)
+	}
+
+	stdout.Reset()
+	err = runner.Run([]string{"diff", "--target-dir", targetDir}, &stdout, &stderr)
+	if err != errDrift {
+		t.Fatalf("diff should return drift, got %v", err)
+	}
+	for _, want := range []string{
+		" .env\n",
+		"+# start driftline from y-writings/source-repo/.driftline/contract.toml\n",
+		"+# DO NOT EDIT: this section is managed automatically by driftline.\n",
+		"+.env\n",
+		"+/dist/\n",
+		"+# end driftline\n",
+	} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("Gitignore diff missing %q:\n%s", want, stdout.String())
+		}
+	}
+	assertStableGitIgnoreDiffPaths(t, stdout.String(), targetDir, false)
+
+	stdout.Reset()
+	err = runner.Run([]string{"update", "--target-dir", targetDir}, &stdout, &stderr)
+	if isUnsupportedGitIgnoreCapability(err) {
+		if got := readFile(t, targetDir, ".gitignore"); got != outside {
+			t.Fatalf("unsupported update changed .gitignore: %q", got)
+		}
+		if got := readFile(t, targetDir, driftline.SyncManifestPath); got != syncManifest {
+			t.Fatalf("unsupported update rewrote Sync manifest:\n%s", got)
+		}
+		return
+	}
+	if err != nil {
+		t.Fatalf("update failed: %v", err)
+	}
+	if got, want := stdout.String(), "add gitignore: generated section is missing\n"; got != want {
+		t.Fatalf("unexpected update output: got %q, want %q", got, want)
+	}
+	wantGitIgnore := outside + "\n" + commandGitIgnoreBlock("y-writings/source-repo", ".env", "/dist/")
+	if got := readFile(t, targetDir, ".gitignore"); got != wantGitIgnore {
+		t.Fatalf("update should preserve outside duplicate and append generated section:\ngot:  %q\nwant: %q", got, wantGitIgnore)
+	}
+	if got := readFile(t, targetDir, driftline.SyncManifestPath); got != syncManifest {
+		t.Fatalf("Gitignore-only update rewrote Sync manifest:\n%s", got)
+	}
+
+	stdout.Reset()
+	if err := runner.Run([]string{"check", "--target-dir", targetDir}, &stdout, &stderr); err != nil {
+		t.Fatalf("post-update check failed: %v", err)
+	}
+	if got, want := stdout.String(), "synced\n"; got != want {
+		t.Fatalf("unexpected synced output: got %q, want %q", got, want)
+	}
+}
+
+func TestUpdateRemovesGitIgnoreSectionAndPreservesOutsideBytes(t *testing.T) {
+	targetDir := t.TempDir()
+	syncManifest := syncManifestTOML("")
+	writeFile(t, targetDir, driftline.SyncManifestPath, syncManifest)
+	before := []byte("local\r\n\r\n")
+	after := []byte("# separator stays\ntail\n")
+	current := append(append(append([]byte(nil), before...), []byte(commandGitIgnoreBlock("old/repo", ".env"))...), after...)
+	writeFileBytes(t, targetDir, ".gitignore", current)
+	client := newCommandSourceClient("main", "version = 2\n", nil)
+
+	var stdout, stderr bytes.Buffer
+	err := (Runner{Source: client}).Run([]string{"update", "--target-dir", targetDir}, &stdout, &stderr)
+	if isUnsupportedGitIgnoreCapability(err) {
+		if got, readErr := os.ReadFile(filepath.Join(targetDir, ".gitignore")); readErr != nil || !bytes.Equal(got, current) {
+			t.Fatalf("unsupported update changed .gitignore: got %q, err=%v", got, readErr)
+		}
+		return
+	}
+	if err != nil {
+		t.Fatalf("update failed: %v", err)
+	}
+	if got, want := stdout.String(), "remove gitignore: generated section is no longer declared\n"; got != want {
+		t.Fatalf("unexpected removal output: got %q, want %q", got, want)
+	}
+	want := append(append([]byte(nil), before...), after...)
+	if got, err := os.ReadFile(filepath.Join(targetDir, ".gitignore")); err != nil || !bytes.Equal(got, want) {
+		t.Fatalf("outside bytes changed: got %q, want %q, err=%v", got, want, err)
+	}
+	info, err := os.Lstat(filepath.Join(targetDir, ".gitignore"))
+	if err != nil || !info.Mode().IsRegular() {
+		t.Fatalf("section removal should leave a regular file: info=%#v err=%v", info, err)
+	}
+	if got := readFile(t, targetDir, driftline.SyncManifestPath); got != syncManifest {
+		t.Fatalf("Gitignore removal rewrote Sync manifest:\n%s", got)
+	}
+}
+
+func TestUpdateReplacesEditedGitIgnoreSectionAndProvenanceInPlace(t *testing.T) {
+	targetDir := t.TempDir()
+	writeFile(t, targetDir, driftline.SyncManifestPath, syncManifestTOML(""))
+	before := "# target before\n\n"
+	after := "# target after\n"
+	current := before + commandGitIgnoreBlock("old/repo", "edited-entry") + after
+	writeFile(t, targetDir, ".gitignore", current)
+	client := newCommandSourceClient("main", `version = 2
+
+[gitignore]
+entries = [".env", "/dist/"]
+`, nil)
+
+	var stdout, stderr bytes.Buffer
+	err := (Runner{Source: client}).Run([]string{"update", "--target-dir", targetDir}, &stdout, &stderr)
+	if isUnsupportedGitIgnoreCapability(err) {
+		if got := readFile(t, targetDir, ".gitignore"); got != current {
+			t.Fatalf("unsupported update changed .gitignore: %q", got)
+		}
+		return
+	}
+	if err != nil {
+		t.Fatalf("update failed: %v", err)
+	}
+	if got, want := stdout.String(), "update gitignore: generated section differs\n"; got != want {
+		t.Fatalf("unexpected update output: got %q, want %q", got, want)
+	}
+	want := before + commandGitIgnoreBlock("y-writings/source-repo", ".env", "/dist/") + after
+	if got := readFile(t, targetDir, ".gitignore"); got != want {
+		t.Fatalf("generated section was not replaced in place: got %q, want %q", got, want)
+	}
+}
+
+func TestDiffReportsGitBinaryMessageForBinaryGitIgnoreOutsideBytes(t *testing.T) {
+	targetDir := t.TempDir()
+	writeFile(t, targetDir, driftline.SyncManifestPath, syncManifestTOML(""))
+	original := []byte{'l', 'o', 'c', 'a', 'l', 0, '\n'}
+	writeFileBytes(t, targetDir, ".gitignore", original)
+	client := newCommandSourceClient("main", `version = 2
+
+[gitignore]
+entries = [".env"]
+`, nil)
+
+	var stdout, stderr bytes.Buffer
+	err := (Runner{Source: client}).Run([]string{"diff", "--target-dir", targetDir}, &stdout, &stderr)
+	if err != errDrift {
+		t.Fatalf("binary diff should return drift, got %v", err)
+	}
+	if !strings.Contains(stdout.String(), "Binary files ") || !strings.Contains(stdout.String(), " differ\n") {
+		t.Fatalf("expected Git binary diff output, got:\n%s", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "Binary files a/.gitignore and b/.gitignore differ\n") {
+		t.Fatalf("binary diff should identify logical .gitignore, got:\n%s", stdout.String())
+	}
+	assertStableGitIgnoreDiffPaths(t, stdout.String(), targetDir, false)
+	if got, readErr := os.ReadFile(filepath.Join(targetDir, ".gitignore")); readErr != nil || !bytes.Equal(got, original) {
+		t.Fatalf("diff changed .gitignore: got %q err=%v", got, readErr)
+	}
+}
+
+func TestDiffMissingGitIgnoreUsesStableLogicalLabels(t *testing.T) {
+	targetDir := t.TempDir()
+	writeFile(t, targetDir, driftline.SyncManifestPath, syncManifestTOML(""))
+	client := newCommandSourceClient("main", `version = 2
+
+[gitignore]
+entries = [".env"]
+`, nil)
+
+	var stdout, stderr bytes.Buffer
+	err := (Runner{Source: client}).Run([]string{"diff", "--target-dir", targetDir}, &stdout, &stderr)
+	if err != errDrift {
+		t.Fatalf("missing Gitignore diff should return drift, got %v", err)
+	}
+	assertStableGitIgnoreDiffPaths(t, stdout.String(), targetDir, true)
+	if !strings.Contains(stdout.String(), "+.env\n") {
+		t.Fatalf("missing Gitignore diff omitted desired bytes:\n%s", stdout.String())
+	}
+}
+
+func TestDiffDisablesGitColorConfiguration(t *testing.T) {
+	targetDir := t.TempDir()
+	writeFile(t, targetDir, driftline.SyncManifestPath, syncManifestTOML(""))
+	writeFile(t, targetDir, ".gitignore", "old\n")
+	client := newCommandSourceClient("main", `version = 2
+
+[gitignore]
+entries = ["new"]
+`, nil)
+	setGitConfig(t, [][2]string{{"color.ui", "always"}})
+
+	var stdout, stderr bytes.Buffer
+	err := (Runner{Source: client}).Run([]string{"diff", "--target-dir", targetDir}, &stdout, &stderr)
+	if err != errDrift {
+		t.Fatalf("colored Gitignore diff should return drift, got %v", err)
+	}
+	if bytes.Contains(stdout.Bytes(), []byte("\x1b[")) {
+		t.Fatalf("Gitignore diff inherited ANSI color configuration: %q", stdout.String())
+	}
+}
+
+func TestDiffDisablesExternalAndTextconvDrivers(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		configure func(t *testing.T)
+		forbidden string
+	}{
+		{
+			name: "external diff",
+			configure: func(t *testing.T) {
+				script := writeExecutableTestFile(t, "external-diff.sh", "#!/bin/sh\nprintf 'EXTERNAL-DIFF-RAN\\n'\n")
+				t.Setenv("GIT_EXTERNAL_DIFF", script)
+			},
+			forbidden: "EXTERNAL-DIFF-RAN",
+		},
+		{
+			name: "textconv",
+			configure: func(t *testing.T) {
+				script := writeExecutableTestFile(t, "textconv.sh", "#!/bin/sh\nprintf 'TEXTCONV-RAN\\n'\n")
+				attributesDir := t.TempDir()
+				writeFile(t, attributesDir, "attributes", "* diff=driftline-test\n")
+				setGitConfig(t, [][2]string{
+					{"core.attributesFile", filepath.Join(attributesDir, "attributes")},
+					{"diff.driftline-test.textconv", script},
+				})
+			},
+			forbidden: "TEXTCONV-RAN",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			targetDir := t.TempDir()
+			writeFile(t, targetDir, driftline.SyncManifestPath, syncManifestTOML(""))
+			writeFile(t, targetDir, ".gitignore", "old\n")
+			client := newCommandSourceClient("main", `version = 2
+
+[gitignore]
+entries = ["new"]
+`, nil)
+			tt.configure(t)
+
+			var stdout, stderr bytes.Buffer
+			err := (Runner{Source: client}).Run([]string{"diff", "--target-dir", targetDir}, &stdout, &stderr)
+			if err != errDrift {
+				t.Fatalf("Gitignore diff should return drift, got %v", err)
+			}
+			if strings.Contains(stdout.String(), tt.forbidden) {
+				t.Fatalf("Gitignore diff invoked configured driver %q:\n%s", tt.forbidden, stdout.String())
+			}
+			if !strings.Contains(stdout.String(), " old\n") || !strings.Contains(stdout.String(), "+new\n") {
+				t.Fatalf("Gitignore diff omitted untransformed bytes:\n%s", stdout.String())
+			}
+		})
+	}
+}
+
+func TestUpdateRejectsMalformedGitIgnoreBeforeManagedAndSyncWrites(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		content string
+	}{
+		{
+			name:    "unmatched marker",
+			content: "# start driftline from old/repo/.driftline/contract.toml\n.env\n",
+		},
+		{
+			name: "multiple sections",
+			content: commandGitIgnoreBlock("old/repo", ".env") +
+				commandGitIgnoreBlock("another/repo", "/dist/"),
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			targetDir := t.TempDir()
+			syncManifest := syncManifestTOML("")
+			writeFile(t, targetDir, driftline.SyncManifestPath, syncManifest)
+			writeFile(t, targetDir, ".gitignore", tt.content)
+			writeFile(t, targetDir, "tool.toml", "target-owned\n")
+			client := newCommandSourceClient("main", `version = 2
+
+[gitignore]
+entries = [".env"]
+
+[files.tool]
+config = { path = "tool.toml", mode = "managed" }
+`, map[string]string{"tool.toml": "source\n"})
+
+			var stdout, stderr bytes.Buffer
+			err := (Runner{Source: client}).Run([]string{"update", "--target-dir", targetDir, "--force", "tool.config"}, &stdout, &stderr)
+			if err == nil || !strings.Contains(err.Error(), "invalid driftline section in .gitignore") {
+				t.Fatalf("expected marker planning error, got %v", err)
+			}
+			if strings.Contains(err.Error(), "--force") || strings.Contains(stdout.String(), "--force") {
+				t.Fatalf("marker error must not include force guidance: err=%v stdout=%q", err, stdout.String())
+			}
+			if stdout.Len() != 0 {
+				t.Fatalf("planning error should not print a partial plan: %q", stdout.String())
+			}
+			if got := readFile(t, targetDir, "tool.toml"); got != "target-owned\n" {
+				t.Fatalf("marker error allowed Managed write: %q", got)
+			}
+			if got := readFile(t, targetDir, driftline.SyncManifestPath); got != syncManifest {
+				t.Fatalf("marker error allowed Sync rewrite:\n%s", got)
+			}
+			if got := readFile(t, targetDir, ".gitignore"); got != tt.content {
+				t.Fatalf("marker error changed .gitignore: %q", got)
+			}
+		})
+	}
+}
+
+func TestUpdateTransitionsBetweenManagedAndGitIgnoreSectionOwnership(t *testing.T) {
+	t.Run("Managed to Gitignore section", func(t *testing.T) {
+		targetDir := t.TempDir()
+		syncManifest := syncManifestTOML(`[files.repository]
+ignore = ".gitignore"
+`)
+		writeFile(t, targetDir, driftline.SyncManifestPath, syncManifest)
+		writeFile(t, targetDir, ".gitignore", "previous Managed bytes\n")
+		client := newCommandSourceClient("main", `version = 2
+
+[gitignore]
+entries = [".env"]
+`, nil)
+
+		var stdout, stderr bytes.Buffer
+		err := (Runner{Source: client}).Run([]string{"update", "--target-dir", targetDir}, &stdout, &stderr)
+		if isUnsupportedGitIgnoreCapability(err) {
+			if got := readFile(t, targetDir, ".gitignore"); got != "previous Managed bytes\n" {
+				t.Fatalf("unsupported transition changed .gitignore: %q", got)
+			}
+			if got := readFile(t, targetDir, driftline.SyncManifestPath); got != syncManifest {
+				t.Fatalf("unsupported transition rewrote Sync manifest:\n%s", got)
+			}
+			return
+		}
+		if err != nil {
+			t.Fatalf("update failed: %v", err)
+		}
+		wantOutput := "remove repository.ignore: managed file removed from Contract\n" +
+			"sync-manifest-remove repository.ignore: remove Sync manifest entry\n" +
+			"add gitignore: generated section is missing\n"
+		if got := stdout.String(); got != wantOutput {
+			t.Fatalf("unexpected transition output: got %q, want %q", got, wantOutput)
+		}
+		if got, want := readFile(t, targetDir, ".gitignore"), commandGitIgnoreBlock("y-writings/source-repo", ".env"); got != want {
+			t.Fatalf("Managed bytes should be replaced by generated-only file: got %q, want %q", got, want)
+		}
+	})
+
+	t.Run("Gitignore section to Managed", func(t *testing.T) {
+		targetDir := t.TempDir()
+		writeFile(t, targetDir, driftline.SyncManifestPath, syncManifestTOML(""))
+		writeFile(t, targetDir, ".gitignore", "# target-owned\n\n"+commandGitIgnoreBlock("y-writings/source-repo", ".env"))
+		client := newCommandSourceClient("main", `version = 2
+
+[files.repository]
+ignore = { path = ".gitignore", mode = "managed" }
+`, map[string]string{".gitignore": "whole source file\n"})
+		runner := Runner{Source: client}
+
+		var stdout, stderr bytes.Buffer
+		err := runner.Run([]string{"update", "--target-dir", targetDir}, &stdout, &stderr)
+		if err != errDrift {
+			t.Fatalf("new Managed .gitignore should conflict, got %v", err)
+		}
+		wantConflict := `conflict repository.ignore: target already exists
+  target: .gitignore
+  source mode: managed
+
+Choose one:
+  1. set another target path in .driftline/sync.toml
+  2. move the existing target file
+  3. rerun with --force repository.ignore to overwrite
+`
+		if got := stdout.String(); got != wantConflict {
+			t.Fatalf("unexpected transition conflict:\n%s", got)
+		}
+
+		stdout.Reset()
+		if err := runner.Run([]string{"update", "--target-dir", targetDir, "--force", "repository.ignore"}, &stdout, &stderr); err != nil {
+			t.Fatalf("forced transition failed: %v", err)
+		}
+		wantOutput := "sync-manifest-add repository.ignore: add Sync manifest entry\n" +
+			"update repository.ignore: target differs from source\n"
+		if got := stdout.String(); got != wantOutput {
+			t.Fatalf("unexpected forced transition output: got %q, want %q", got, wantOutput)
+		}
+		if got, want := readFile(t, targetDir, ".gitignore"), "whole source file\n"; got != want {
+			t.Fatalf("forced transition should replace whole file: got %q, want %q", got, want)
+		}
+
+		stdout.Reset()
+		if err := runner.Run([]string{"update", "--target-dir", targetDir}, &stdout, &stderr); err != nil {
+			t.Fatalf("force should be one-time, subsequent update failed: %v", err)
+		}
+		if got, want := stdout.String(), "synced\n"; got != want {
+			t.Fatalf("unexpected subsequent output: got %q, want %q", got, want)
+		}
+	})
+}
+
+func TestUpdateGitIgnoreSectionPreservesTemplateBytesOutsideSection(t *testing.T) {
+	targetDir := t.TempDir()
+	syncManifest := syncManifestTOML("")
+	writeFile(t, targetDir, driftline.SyncManifestPath, syncManifest)
+	templateBytes := "# Template-owned defaults\n*.local\n"
+	writeFile(t, targetDir, ".gitignore", templateBytes)
+	client := newCommandSourceClient("main", `version = 2
+
+[gitignore]
+entries = [".env"]
+
+[files.repository]
+ignore = { path = ".gitignore", mode = "template" }
+`, nil)
+
+	var stdout, stderr bytes.Buffer
+	err := (Runner{Source: client}).Run([]string{"update", "--target-dir", targetDir}, &stdout, &stderr)
+	if isUnsupportedGitIgnoreCapability(err) {
+		if got := readFile(t, targetDir, ".gitignore"); got != templateBytes {
+			t.Fatalf("unsupported update changed Template bytes: %q", got)
+		}
+		if got := readFile(t, targetDir, driftline.SyncManifestPath); got != syncManifest {
+			t.Fatalf("unsupported update rewrote Sync manifest:\n%s", got)
+		}
+		return
+	}
+	if err != nil {
+		t.Fatalf("update failed: %v", err)
+	}
+	if got, want := stdout.String(), "add gitignore: generated section is missing\n"; got != want {
+		t.Fatalf("unexpected coexistence output: got %q, want %q", got, want)
+	}
+	want := templateBytes + "\n" + commandGitIgnoreBlock("y-writings/source-repo", ".env")
+	if got := readFile(t, targetDir, ".gitignore"); got != want {
+		t.Fatalf("Template bytes outside section changed: got %q, want %q", got, want)
+	}
+	if got := readFile(t, targetDir, driftline.SyncManifestPath); got != syncManifest {
+		t.Fatalf("Gitignore-only Template coexistence rewrote Sync manifest:\n%s", got)
+	}
+}
+
+func TestUpdateConflictPrintsCompletePlanIncludingGitIgnoreChange(t *testing.T) {
+	targetDir := t.TempDir()
+	syncManifest := syncManifestTOML("")
+	writeFile(t, targetDir, driftline.SyncManifestPath, syncManifest)
+	writeFile(t, targetDir, "tool.toml", "target-owned\n")
+	client := newCommandSourceClient("main", `version = 2
+
+[gitignore]
+entries = [".env"]
+
+[files.tool]
+config = { path = "tool.toml", mode = "managed" }
+`, nil)
+
+	var stdout, stderr bytes.Buffer
+	err := (Runner{Source: client}).Run([]string{"update", "--target-dir", targetDir}, &stdout, &stderr)
+	if err != errDrift {
+		t.Fatalf("update should return conflict drift, got %v", err)
+	}
+	want := `conflict tool.config: target already exists
+  target: tool.toml
+  source mode: managed
+
+Choose one:
+  1. set another target path in .driftline/sync.toml
+  2. move the existing target file
+  3. rerun with --force tool.config to overwrite
+add gitignore: generated section is missing
+`
+	if got := stdout.String(); got != want {
+		t.Fatalf("conflict should print complete plan:\ngot:\n%swant:\n%s", got, want)
+	}
+	assertFileMissing(t, targetDir, ".gitignore")
+	if got := readFile(t, targetDir, driftline.SyncManifestPath); got != syncManifest {
+		t.Fatalf("conflict rewrote Sync manifest:\n%s", got)
+	}
+}
+
+func TestUpdateFailsClosedWhenGitIgnoreApplyIsUnsupported(t *testing.T) {
+	targetDir := t.TempDir()
+	syncManifest := syncManifestTOML("")
+	writeFile(t, targetDir, driftline.SyncManifestPath, syncManifest)
+	writeFile(t, targetDir, "tool.toml", "target-owned\n")
+	client := newCommandSourceClient("main", `version = 2
+
+[gitignore]
+entries = [".env"]
+
+[files.tool]
+config = { path = "tool.toml", mode = "managed" }
+`, map[string]string{"tool.toml": "source\n"})
+
+	var stdout, stderr bytes.Buffer
+	err := (Runner{Source: client}).Run([]string{"update", "--target-dir", targetDir, "--force", "tool.config"}, &stdout, &stderr)
+	if err == nil {
+		return
+	}
+	if !isUnsupportedGitIgnoreCapability(err) {
+		t.Fatalf("update failed for an unexpected reason: %v", err)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("unsupported update printed an unapplied plan: %q", stdout.String())
+	}
+	assertFileMissing(t, targetDir, ".gitignore")
+	if got := readFile(t, targetDir, "tool.toml"); got != "target-owned\n" {
+		t.Fatalf("unsupported update changed Managed target: %q", got)
+	}
+	if got := readFile(t, targetDir, driftline.SyncManifestPath); got != syncManifest {
+		t.Fatalf("unsupported update rewrote Sync manifest:\n%s", got)
+	}
+}
+
+func TestDiffPrintsManagedChangesBeforeGitIgnoreDiff(t *testing.T) {
+	targetDir := t.TempDir()
+	writeFile(t, targetDir, driftline.SyncManifestPath, syncManifestTOML(`[files.tool]
+config = "tool.toml"
+`))
+	writeFile(t, targetDir, "tool.toml", "old\n")
+	writeFile(t, targetDir, ".gitignore", "# target-owned\n")
+	client := newCommandSourceClient("main", `version = 2
+
+[gitignore]
+entries = [".env"]
+
+[files.tool]
+config = { path = "tool.toml", mode = "managed" }
+`, map[string]string{"tool.toml": "new\n"})
+
+	var stdout, stderr bytes.Buffer
+	err := (Runner{Source: client}).Run([]string{"diff", "--target-dir", targetDir}, &stdout, &stderr)
+	if err != errDrift {
+		t.Fatalf("diff should return drift, got %v", err)
+	}
+	managedAt := strings.Index(stdout.String(), "-old\n+new\n")
+	gitIgnoreAt := strings.Index(stdout.String(), "diff --git a/.gitignore b/.gitignore")
+	if managedAt < 0 || gitIgnoreAt < 0 || managedAt >= gitIgnoreAt {
+		t.Fatalf("Managed diff should precede Gitignore diff:\n%s", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "+.env\n") {
+		t.Fatalf("Gitignore diff missing generated entry:\n%s", stdout.String())
+	}
+}
+
+func TestDiffPrintsCompleteGitIgnoreUpdateAndRemoval(t *testing.T) {
+	for _, tt := range []struct {
+		name          string
+		contract      string
+		current       string
+		wantFragments []string
+	}{
+		{
+			name: "update",
+			contract: `version = 2
+
+[gitignore]
+entries = [".env"]
+`,
+			current: "# before\n\n" + commandGitIgnoreBlock("old/repo", "old-entry") + "# after\n",
+			wantFragments: []string{
+				" # before\n",
+				"-# start driftline from old/repo/.driftline/contract.toml\n",
+				"+# start driftline from y-writings/source-repo/.driftline/contract.toml\n",
+				"-old-entry\n",
+				"+.env\n",
+				" # after\n",
+			},
+		},
+		{
+			name:     "remove",
+			contract: "version = 2\n",
+			current:  "# before\n\n" + commandGitIgnoreBlock("old/repo", "old-entry") + "# after\n",
+			wantFragments: []string{
+				" # before\n",
+				"-# start driftline from old/repo/.driftline/contract.toml\n",
+				"-old-entry\n",
+				"-# end driftline\n",
+				" # after\n",
+			},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			targetDir := t.TempDir()
+			writeFile(t, targetDir, driftline.SyncManifestPath, syncManifestTOML(""))
+			writeFile(t, targetDir, ".gitignore", tt.current)
+			client := newCommandSourceClient("main", tt.contract, nil)
+
+			var stdout, stderr bytes.Buffer
+			err := (Runner{Source: client}).Run([]string{"diff", "--target-dir", targetDir}, &stdout, &stderr)
+			if err != errDrift {
+				t.Fatalf("diff should return drift, got %v", err)
+			}
+			for _, want := range tt.wantFragments {
+				if !strings.Contains(stdout.String(), want) {
+					t.Fatalf("complete-file diff missing %q:\n%s", want, stdout.String())
+				}
+			}
+			if got := readFile(t, targetDir, ".gitignore"); got != tt.current {
+				t.Fatalf("diff changed .gitignore: got %q, want %q", got, tt.current)
+			}
+		})
+	}
 }
 
 func TestUpdateManagesOldLockArtifactAsOrdinaryTarget(t *testing.T) {
@@ -931,6 +1622,60 @@ func newCommandSourceClient(ref string, contract string, files map[string]string
 	return client
 }
 
+func commandGitIgnoreBlock(repository string, entries ...string) string {
+	return "# start driftline from " + repository + "/" + driftline.ContractPath + "\n" +
+		"# DO NOT EDIT: this section is managed automatically by driftline.\n" +
+		strings.Join(entries, "\n") + "\n" +
+		"# end driftline\n"
+}
+
+func assertStableGitIgnoreDiffPaths(t *testing.T, output, targetDir string, targetMissing bool) {
+	t.Helper()
+	if want := "diff --git a/.gitignore b/.gitignore\n"; !strings.Contains(output, want) {
+		t.Fatalf("Gitignore diff missing stable label %q:\n%s", want, output)
+	}
+	if strings.Contains(output, "--- ") {
+		wantLeft := "--- a/.gitignore\n"
+		if targetMissing {
+			wantLeft = "--- /dev/null\n"
+		}
+		for _, want := range []string{wantLeft, "+++ b/.gitignore\n"} {
+			if !strings.Contains(output, want) {
+				t.Fatalf("Gitignore diff missing stable label %q:\n%s", want, output)
+			}
+		}
+	}
+	for _, forbidden := range []string{targetDir, os.TempDir(), "driftline-source-", "driftline-diff-"} {
+		if strings.Contains(output, forbidden) {
+			t.Fatalf("Gitignore diff exposes physical path %q:\n%s", forbidden, output)
+		}
+	}
+}
+
+func setGitConfig(t *testing.T, entries [][2]string) {
+	t.Helper()
+	t.Setenv("GIT_CONFIG_COUNT", fmt.Sprint(len(entries)))
+	for index, entry := range entries {
+		t.Setenv(fmt.Sprintf("GIT_CONFIG_KEY_%d", index), entry[0])
+		t.Setenv(fmt.Sprintf("GIT_CONFIG_VALUE_%d", index), entry[1])
+	}
+}
+
+func writeExecutableTestFile(t *testing.T, name, content string) string {
+	t.Helper()
+	root := t.TempDir()
+	writeFile(t, root, name, content)
+	path := filepath.Join(root, name)
+	if err := os.Chmod(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func isUnsupportedGitIgnoreCapability(err error) bool {
+	return err != nil && strings.Contains(err.Error(), ".gitignore") && strings.Contains(err.Error(), "unsupported")
+}
+
 func writeFile(t *testing.T, root, path, content string) {
 	t.Helper()
 	fullPath := filepath.Join(root, path)
@@ -938,6 +1683,17 @@ func writeFile(t *testing.T, root, path, content string) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(fullPath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeFileBytes(t *testing.T, root, path string, content []byte) {
+	t.Helper()
+	fullPath := filepath.Join(root, path)
+	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(fullPath, content, 0o644); err != nil {
 		t.Fatal(err)
 	}
 }

@@ -12,12 +12,12 @@ func runUpdate(source driftline.SourceClient, opts UpdateOptions, stdout io.Writ
 		return err
 	}
 	if plan.HasConflicts() {
-		printChanges(stdout, plan.Changes)
+		printPlan(stdout, plan)
 		return errDrift
 	}
 	if err := (driftline.TargetRepository{Root: opts.TargetDir}).Apply(plan); err != nil {
 		return err
 	}
-	printChanges(stdout, plan.Changes)
+	printPlan(stdout, plan)
 	return nil
 }

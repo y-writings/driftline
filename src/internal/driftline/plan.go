@@ -22,12 +22,25 @@ type Plan struct {
 	SyncManifest     SyncManifest
 	Contract         Contract
 	Changes          []Change
+	GitIgnore        *GitIgnoreSectionChange
 	NextSyncManifest SyncManifest
 }
 
 func (p Plan) HasConflicts() bool {
 	for _, change := range p.Changes {
 		if change.Status == StatusConflict {
+			return true
+		}
+	}
+	return false
+}
+
+func (p Plan) HasDrift() bool {
+	if p.GitIgnore != nil {
+		return true
+	}
+	for _, change := range p.Changes {
+		if change.Status != StatusSynced {
 			return true
 		}
 	}
@@ -104,6 +117,13 @@ func (b planBuilder) build() (Plan, error) {
 		declaredTargets[entry.Path] = entry.Key
 	}
 	staleDeleteTargets := staleDeleteTargetPaths(b.syncManifest, contractByKey)
+	gitIgnoreOwnerKey, gitIgnoreCurrentlyManaged := declaredTargets[GitIgnorePath]
+	gitIgnoreOwner, gitIgnoreOwnerStillDeclared := contractByKey[gitIgnoreOwnerKey]
+	gitIgnoreOwnerRemoved := gitIgnoreCurrentlyManaged && !gitIgnoreOwnerStillDeclared
+	gitIgnoreOwnerChangedToTemplate := gitIgnoreCurrentlyManaged &&
+		gitIgnoreOwnerStillDeclared &&
+		gitIgnoreOwner.Mode == ModeTemplate
+	gitIgnoreEntriesConfigured := b.contract.GitIgnore != nil && len(b.contract.GitIgnore.Entries) > 0
 
 	plan := Plan{
 		Repository:   b.syncManifest.Source.Repository,
@@ -118,16 +138,28 @@ func (b planBuilder) build() (Plan, error) {
 		},
 	}
 
-	usedTargets := map[string]string{}
-	forceMatched := b.opts.ForceKey == ""
+	resolvedManaged := make([]resolvedManagedFile, 0, len(managed))
+	gitIgnoreOwnedByManaged := false
 	for _, entry := range managed {
-		if entry.Key == b.opts.ForceKey {
-			forceMatched = true
-		}
 		resolved := resolvedManagedFile{ContractEntry: entry, target: entry.Path}
 		if target, ok := syncByKey[entry.Key]; ok {
 			resolved.target = target.Path
 			resolved.declared = true
+		}
+		if err := validateManagedGitIgnoreTarget(b.contract.GitIgnore, resolved); err != nil {
+			return Plan{}, err
+		}
+		if resolved.target == GitIgnorePath {
+			gitIgnoreOwnedByManaged = true
+		}
+		resolvedManaged = append(resolvedManaged, resolved)
+	}
+
+	usedTargets := map[string]string{}
+	forceMatched := b.opts.ForceKey == ""
+	for _, resolved := range resolvedManaged {
+		if resolved.Key == b.opts.ForceKey {
+			forceMatched = true
 		}
 		if other, ok := usedTargets[resolved.target]; ok {
 			plan.Changes = append(plan.Changes, conflictChange(resolved, "target already declared by "+other, false))
@@ -186,7 +218,22 @@ func (b planBuilder) build() (Plan, error) {
 		plan.Changes = append(plan.Changes, syncManifestRemoveChange(target))
 	}
 
-	if len(plan.Changes) == 0 {
+	skipGitIgnoreSectionPlanning := gitIgnoreOwnedByManaged ||
+		(!gitIgnoreEntriesConfigured && (gitIgnoreOwnerRemoved || gitIgnoreOwnerChangedToTemplate))
+	if !skipGitIgnoreSectionPlanning {
+		gitIgnore, err := planGitIgnoreSectionChange(
+			b.opts.TargetDir,
+			b.syncManifest.Source.Repository,
+			b.contract.GitIgnore,
+			gitIgnoreOwnerRemoved,
+		)
+		if err != nil {
+			return Plan{}, err
+		}
+		plan.GitIgnore = gitIgnore
+	}
+
+	if len(plan.Changes) == 0 && plan.GitIgnore == nil {
 		plan.Changes = append(plan.Changes, Change{Status: StatusSynced})
 	}
 	return plan, nil
@@ -360,13 +407,4 @@ func validateForceKey(key string) error {
 
 func normalizedConfigPath(path string) string {
 	return filepath.ToSlash(filepath.Clean(path))
-}
-
-func HasDrift(changes []Change) bool {
-	for _, change := range changes {
-		if change.Status != StatusSynced {
-			return true
-		}
-	}
-	return false
 }

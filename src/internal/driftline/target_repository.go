@@ -8,12 +8,24 @@ import (
 )
 
 type TargetRepository struct {
-	Root string
+	Root                               string
+	validateAtomicGitIgnoreReplacement func() error
+	prepareSyncManifestRewrite         func(string, SyncManifest) (func() error, func() error, error)
+	prepareGitIgnoreRewrite            func(GitIgnoreSectionChange) (func() error, func() error, error)
 }
 
-func (r TargetRepository) Apply(plan Plan) error {
+func (r TargetRepository) Apply(plan Plan) (err error) {
 	if plan.HasConflicts() {
 		return fmt.Errorf("cannot apply conflicted sync plan")
+	}
+	if plan.GitIgnore != nil {
+		validate := r.validateAtomicGitIgnoreReplacement
+		if validate == nil {
+			validate = validateAtomicGitIgnoreReplacement
+		}
+		if err := validate(); err != nil {
+			return err
+		}
 	}
 	root := r.Root
 	if root == "" {
@@ -22,12 +34,38 @@ func (r TargetRepository) Apply(plan Plan) error {
 
 	var commitSyncManifest func() error
 	if planHasSyncManifestChanges(plan.Changes) {
-		commit, cleanup, err := PrepareSyncManifestRewrite(root, plan.NextSyncManifest)
-		if err != nil {
-			return err
+		prepare := r.prepareSyncManifestRewrite
+		if prepare == nil {
+			prepare = PrepareSyncManifestRewrite
 		}
-		defer cleanup()
+		commit, cleanup, prepareErr := prepare(root, plan.NextSyncManifest)
+		if prepareErr != nil {
+			return prepareErr
+		}
+		defer func() {
+			if cleanupErr := cleanup(); cleanupErr != nil {
+				err = errors.Join(err, fmt.Errorf("cleanup Sync manifest rewrite: %w", cleanupErr))
+			}
+		}()
 		commitSyncManifest = commit
+	}
+
+	var commitGitIgnore func() error
+	if plan.GitIgnore != nil {
+		prepare := r.prepareGitIgnoreRewrite
+		if prepare == nil {
+			prepare = PrepareGitIgnoreRewrite
+		}
+		commit, cleanup, prepareErr := prepare(*plan.GitIgnore)
+		if prepareErr != nil {
+			return prepareErr
+		}
+		defer func() {
+			if cleanupErr := cleanup(); cleanupErr != nil {
+				err = errors.Join(err, fmt.Errorf("cleanup %s rewrite: %w", GitIgnorePath, cleanupErr))
+			}
+		}()
+		commitGitIgnore = commit
 	}
 
 	changes := SortedChanges(plan.Changes)
@@ -43,6 +81,11 @@ func (r TargetRepository) Apply(plan Plan) error {
 			if err := WriteFileBytes(change.TargetPath, change.SourceBytes); err != nil {
 				return err
 			}
+		}
+	}
+	if commitGitIgnore != nil {
+		if err := commitGitIgnore(); err != nil {
+			return err
 		}
 	}
 	if commitSyncManifest != nil {

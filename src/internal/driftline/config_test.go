@@ -2,6 +2,7 @@ package driftline
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -33,6 +34,293 @@ config = { path = ".mise/config.toml", mode = "template" }
 	config := contract.Files["mise"]["config"]
 	if config.Path != ".mise/config.toml" || config.Mode != ModeTemplate {
 		t.Fatalf("unexpected mise config entry: %#v", config)
+	}
+}
+
+func TestLoadContractGitIgnoreEntries(t *testing.T) {
+	contract, err := LoadContractBytes([]byte(`version = 2
+
+[gitignore]
+entries = [
+  "",
+  "  ",
+  ".env",
+  ".env",
+  " *.log ",
+  "!/dist/.gitkeep",
+  "# DO NOT EDIT: this section is managed automatically by driftline.",
+  "# start driftline from invalid/.driftline/contract.toml",
+]
+
+[files.root]
+ignore = { path = ".gitignore", mode = "template" }
+`))
+	if err != nil {
+		t.Fatalf("load Contract failed: %v", err)
+	}
+	if contract.Version != 2 {
+		t.Fatalf("unexpected version: %d", contract.Version)
+	}
+	if contract.GitIgnore == nil {
+		t.Fatal("expected gitignore configuration")
+	}
+	want := []string{
+		"",
+		"  ",
+		".env",
+		".env",
+		" *.log ",
+		"!/dist/.gitkeep",
+		"# DO NOT EDIT: this section is managed automatically by driftline.",
+		"# start driftline from invalid/.driftline/contract.toml",
+	}
+	if !slices.Equal(contract.GitIgnore.Entries, want) {
+		t.Fatalf("unexpected gitignore entries: %#v", contract.GitIgnore.Entries)
+	}
+	if got := contract.Files["root"]["ignore"]; got.Path != GitIgnorePath || got.Mode != ModeTemplate {
+		t.Fatalf("unexpected Template .gitignore entry: %#v", got)
+	}
+}
+
+func TestLoadContractGitIgnoreAcceptsExplicitEmptyEntries(t *testing.T) {
+	contract, err := LoadContractBytes([]byte(`version = 2
+
+[gitignore]
+entries = []
+`))
+	if err != nil {
+		t.Fatalf("load Contract failed: %v", err)
+	}
+	if contract.GitIgnore == nil {
+		t.Fatal("expected gitignore configuration")
+	}
+	if len(contract.GitIgnore.Entries) != 0 {
+		t.Fatalf("expected empty gitignore entries, got %#v", contract.GitIgnore.Entries)
+	}
+}
+
+func TestLoadContractRejectsGitIgnoreKeyAliases(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		wantErr string
+	}{
+		{
+			name: "noncanonical table missing entries",
+			input: `version = 2
+
+[GitIgnore]
+`,
+			wantErr: `Contract contains unknown key "GitIgnore"`,
+		},
+		{
+			name: "noncanonical table with entries",
+			input: `version = 2
+
+[GitIgnore]
+entries = []
+`,
+			wantErr: `Contract contains unknown key "GitIgnore"`,
+		},
+		{
+			name: "uppercase table",
+			input: `version = 2
+
+[GITIGNORE]
+entries = []
+`,
+			wantErr: `Contract contains unknown key "GITIGNORE"`,
+		},
+		{
+			name: "canonical and noncanonical tables",
+			input: `version = 2
+
+[gitignore]
+entries = ["canonical"]
+
+[GitIgnore]
+entries = ["alias"]
+`,
+			wantErr: `Contract contains unknown key "GitIgnore"`,
+		},
+		{
+			name: "noncanonical entries",
+			input: `version = 2
+
+[gitignore]
+Entries = []
+`,
+			wantErr: `Contract contains unknown key "gitignore.Entries"`,
+		},
+		{
+			name: "uppercase entries",
+			input: `version = 2
+
+[gitignore]
+ENTRIES = []
+`,
+			wantErr: `Contract contains unknown key "gitignore.ENTRIES"`,
+		},
+		{
+			name: "canonical and noncanonical entries",
+			input: `version = 2
+
+[gitignore]
+entries = ["canonical"]
+Entries = ["alias"]
+`,
+			wantErr: `Contract contains unknown key "gitignore.Entries"`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := LoadContractBytes([]byte(tt.input))
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("expected error containing %q, got %v", tt.wantErr, err)
+			}
+		})
+	}
+}
+
+func TestLoadContractRejectsInvalidGitIgnoreConfiguration(t *testing.T) {
+	for name, tt := range map[string]struct {
+		input   string
+		wantErr string
+	}{
+		"missing entries": {
+			input: `version = 2
+
+[gitignore]
+`,
+			wantErr: "must define entries",
+		},
+		"unknown field": {
+			input: `version = 2
+
+[gitignore]
+entries = []
+unknown = true
+`,
+			wantErr: "contains unknown key",
+		},
+		"decoded multiline entry": {
+			input: `version = 2
+
+[gitignore]
+entries = ["""first
+second"""]
+`,
+			wantErr: "contains CR or LF",
+		},
+		"entry containing CR": {
+			input: `version = 2
+
+[gitignore]
+entries = ["first\rsecond"]
+`,
+			wantErr: "contains CR or LF",
+		},
+		"end marker entry": {
+			input: `version = 2
+
+[gitignore]
+entries = ["# end driftline"]
+`,
+			wantErr: "conflicts with a driftline marker",
+		},
+		"start marker entry": {
+			input: `version = 2
+
+[gitignore]
+entries = ["# start driftline from y-writings/source-repo/.driftline/contract.toml"]
+`,
+			wantErr: "conflicts with a driftline marker",
+		},
+		"Managed exact path with empty entries": {
+			input: `version = 2
+
+[gitignore]
+entries = []
+
+[files.root]
+ignore = { path = ".gitignore", mode = "managed" }
+`,
+			wantErr: "cannot manage .gitignore",
+		},
+		"Managed normalized leading-dot exact path": {
+			input: `version = 2
+
+[gitignore]
+entries = []
+
+[files.root]
+ignore = { path = "./.gitignore", mode = "managed" }
+`,
+			wantErr: "cannot manage .gitignore",
+		},
+		"Managed normalized trailing-dot exact path": {
+			input: `version = 2
+
+[gitignore]
+entries = []
+
+[files.root]
+ignore = { path = ".gitignore/.", mode = "managed" }
+`,
+			wantErr: "cannot manage .gitignore",
+		},
+		"Managed descendant with entries": {
+			input: `version = 2
+
+[gitignore]
+entries = [".env"]
+
+[files.root]
+ignore = { path = ".gitignore/rules", mode = "managed" }
+`,
+			wantErr: "cannot be below .gitignore",
+		},
+		"Managed normalized descendant with entries": {
+			input: `version = 2
+
+[gitignore]
+entries = [".env"]
+
+[files.root]
+ignore = { path = ".gitignore/./rules", mode = "managed" }
+`,
+			wantErr: "cannot be below .gitignore",
+		},
+		"Template descendant with entries": {
+			input: `version = 2
+
+[gitignore]
+entries = [".env"]
+
+[files.root]
+ignore = { path = ".gitignore/rules", mode = "template" }
+`,
+			wantErr: "cannot be below .gitignore",
+		},
+		"Template normalized descendant with entries": {
+			input: `version = 2
+
+[gitignore]
+entries = [".env"]
+
+[files.root]
+ignore = { path = ".gitignore/./rules", mode = "template" }
+`,
+			wantErr: "cannot be below .gitignore",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := LoadContractBytes([]byte(tt.input))
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("expected error containing %q, got %v", tt.wantErr, err)
+			}
+		})
 	}
 }
 
