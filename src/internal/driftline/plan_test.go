@@ -783,19 +783,31 @@ func TestBuildPlanReportsUnreadableRegularGitIgnore(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(targetPath, 0o600) })
+	if _, err := os.ReadFile(targetPath); err == nil {
+		t.Skip("filesystem permits reading a mode 000 file")
+	}
 
 	_, err := BuildPlan(PlanOptions{TargetDir: targetDir, Source: newPlanSourceClient("version = 2\n", nil)})
-	if err == nil || !strings.Contains(err.Error(), "read "+GitIgnorePath) {
+	if err == nil || !strings.Contains(err.Error(), "read "+GitIgnorePath) || !errors.Is(err, os.ErrPermission) {
 		t.Fatalf("expected .gitignore read error, got %v", err)
 	}
 }
 
 func TestBuildPlanRejectsResolvedManagedGitIgnoreTargetWithTable(t *testing.T) {
-	targetDir := t.TempDir()
-	writePlanFile(t, targetDir, SyncManifestPath, syncManifestTOML(`[files.tool]
-ignore = ".gitignore"
+	tests := []struct {
+		name   string
+		target string
+	}{
+		{name: "canonical", target: ".gitignore"},
+		{name: "normalized", target: ".gitignore/."},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			targetDir := t.TempDir()
+			writePlanFile(t, targetDir, SyncManifestPath, syncManifestTOML(`[files.tool]
+ignore = "`+tt.target+`"
 `))
-	client := newPlanSourceClient(`version = 2
+			client := newPlanSourceClient(`version = 2
 
 [gitignore]
 entries = []
@@ -804,18 +816,29 @@ entries = []
 ignore = { path = "source.ignore", mode = "managed" }
 `, map[string]string{"source.ignore": "managed\n"})
 
-	_, err := BuildPlan(PlanOptions{TargetDir: targetDir, Source: client})
-	if err == nil || !strings.Contains(err.Error(), "tool.ignore") || !strings.Contains(err.Error(), "cannot manage .gitignore") {
-		t.Fatalf("expected resolved .gitignore ownership error, got %v", err)
+			_, err := BuildPlan(PlanOptions{TargetDir: targetDir, Source: client})
+			if err == nil || !strings.Contains(err.Error(), "tool.ignore") || !strings.Contains(err.Error(), "cannot manage .gitignore") {
+				t.Fatalf("expected resolved .gitignore ownership error, got %v", err)
+			}
+		})
 	}
 }
 
 func TestBuildPlanRejectsResolvedManagedTargetBelowActiveGitIgnore(t *testing.T) {
-	targetDir := t.TempDir()
-	writePlanFile(t, targetDir, SyncManifestPath, syncManifestTOML(`[files.tool]
-ignore = ".gitignore/rules"
+	tests := []struct {
+		name   string
+		target string
+	}{
+		{name: "canonical", target: ".gitignore/rules"},
+		{name: "normalized", target: ".gitignore/./rules"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			targetDir := t.TempDir()
+			writePlanFile(t, targetDir, SyncManifestPath, syncManifestTOML(`[files.tool]
+ignore = "`+tt.target+`"
 `))
-	client := newPlanSourceClient(`version = 2
+			client := newPlanSourceClient(`version = 2
 
 [gitignore]
 entries = [".env"]
@@ -824,9 +847,11 @@ entries = [".env"]
 ignore = { path = "source.ignore", mode = "managed" }
 `, map[string]string{"source.ignore": "managed\n"})
 
-	_, err := BuildPlan(PlanOptions{TargetDir: targetDir, Source: client})
-	if err == nil || !strings.Contains(err.Error(), "tool.ignore") || !strings.Contains(err.Error(), "cannot be below .gitignore") {
-		t.Fatalf("expected resolved .gitignore descendant error, got %v", err)
+			_, err := BuildPlan(PlanOptions{TargetDir: targetDir, Source: client})
+			if err == nil || !strings.Contains(err.Error(), "tool.ignore") || !strings.Contains(err.Error(), "cannot be below .gitignore") {
+				t.Fatalf("expected resolved .gitignore descendant error, got %v", err)
+			}
+		})
 	}
 }
 

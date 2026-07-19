@@ -3,8 +3,27 @@ package driftline
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
+	"syscall"
 )
+
+func readRegularFileNoFollow(path string) ([]byte, error) {
+	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	info, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, errors.New("opened target is not a regular file")
+	}
+	return io.ReadAll(file)
+}
 
 func planGitIgnoreSectionChange(targetDir string, repository string, config *ContractGitIgnore) (*GitIgnoreSectionChange, error) {
 	targetPath, err := PathWithin(targetDir, GitIgnorePath, GitIgnorePath+" target")
@@ -32,7 +51,7 @@ func planGitIgnoreSectionChange(targetDir string, repository string, config *Con
 
 	var original []byte
 	if !targetMissing {
-		original, err = os.ReadFile(targetPath)
+		original, err = readRegularFileNoFollow(targetPath)
 		if err != nil {
 			return nil, fmt.Errorf("read %s: %w", GitIgnorePath, err)
 		}
