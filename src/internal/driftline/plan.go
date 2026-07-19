@@ -112,6 +112,14 @@ func (b planBuilder) build() (Plan, error) {
 		declaredTargets[entry.Path] = entry.Key
 	}
 	staleDeleteTargets := staleDeleteTargetPaths(b.syncManifest, contractByKey)
+	gitIgnoreOwnerKey, gitIgnoreCurrentlyManaged := declaredTargets[GitIgnorePath]
+	gitIgnoreOwner, gitIgnoreOwnerStillDeclared := contractByKey[gitIgnoreOwnerKey]
+	gitIgnoreOwnerRemoved := gitIgnoreCurrentlyManaged && !gitIgnoreOwnerStillDeclared
+	gitIgnoreOwnerChangedToTemplate := gitIgnoreCurrentlyManaged &&
+		gitIgnoreOwnerStillDeclared &&
+		gitIgnoreOwner.Mode == ModeTemplate &&
+		gitIgnoreOwner.Path == GitIgnorePath
+	gitIgnoreEntriesConfigured := b.contract.GitIgnore != nil && len(b.contract.GitIgnore.Entries) > 0
 
 	plan := Plan{
 		Repository:   b.syncManifest.Source.Repository,
@@ -206,8 +214,15 @@ func (b planBuilder) build() (Plan, error) {
 		plan.Changes = append(plan.Changes, syncManifestRemoveChange(target))
 	}
 
-	if !gitIgnoreOwnedByManaged {
-		gitIgnore, err := planGitIgnoreSectionChange(b.opts.TargetDir, b.syncManifest.Source.Repository, b.contract.GitIgnore)
+	skipGitIgnoreSectionPlanning := gitIgnoreOwnedByManaged ||
+		(!gitIgnoreEntriesConfigured && (gitIgnoreOwnerRemoved || gitIgnoreOwnerChangedToTemplate))
+	if !skipGitIgnoreSectionPlanning {
+		gitIgnore, err := planGitIgnoreSectionChange(
+			b.opts.TargetDir,
+			b.syncManifest.Source.Repository,
+			b.contract.GitIgnore,
+			gitIgnoreOwnerRemoved,
+		)
 		if err != nil {
 			return Plan{}, err
 		}

@@ -854,29 +854,243 @@ ignore = { path = "source.ignore", mode = "managed" }
 	}
 }
 
-func TestBuildPlanSkipsSectionPlanningWhenManagedOwnsGitIgnore(t *testing.T) {
-	targetDir := t.TempDir()
-	writePlanFile(t, targetDir, SyncManifestPath, syncManifestTOML(`[files.tool]
+func TestBuildPlanManagedGitIgnoreOwnershipTakesPrecedenceOverGeneratedSection(t *testing.T) {
+	tests := []struct {
+		name    string
+		current string
+	}{
+		{name: "existing generated section", current: planGitIgnoreBlock("old/repo", "old-entry")},
+		{name: "malformed marker is not scanned", current: "# start driftline from old/repo/" + ContractPath + "\nunterminated\n"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			targetDir := t.TempDir()
+			writePlanFile(t, targetDir, SyncManifestPath, syncManifestTOML(`[files.tool]
 ignore = ".gitignore"
 `))
-	managed := planGitIgnoreBlock("old/repo", "whole-file-content")
-	writePlanFile(t, targetDir, GitIgnorePath, managed)
-	client := newPlanSourceClient(`version = 2
+			writePlanFile(t, targetDir, GitIgnorePath, tt.current)
+			desired := "whole-file-managed\n"
+			client := newPlanSourceClient(`version = 2
 
 [files.tool]
-ignore = { path = "source.ignore", mode = "managed" }
-`, map[string]string{"source.ignore": managed})
+ignore = { path = ".gitignore", mode = "managed" }
+`, map[string]string{GitIgnorePath: desired})
 
-	plan, err := BuildPlan(PlanOptions{TargetDir: targetDir, Source: client})
-	if err != nil {
-		t.Fatalf("build plan failed: %v", err)
+			plan, err := BuildPlan(PlanOptions{TargetDir: targetDir, Source: client})
+			if err != nil {
+				t.Fatalf("build plan failed: %v", err)
+			}
+			if plan.GitIgnore != nil {
+				t.Fatalf("whole-file Managed ownership must skip section planning: %#v", plan.GitIgnore)
+			}
+			change := planChange(t, plan, StatusUpdate, "tool.ignore")
+			if change.Target != GitIgnorePath || !change.WritesTarget || change.DeletesTarget || string(change.SourceBytes) != desired {
+				t.Fatalf("unexpected whole-file Managed plan: %#v", plan)
+			}
+		})
 	}
-	if plan.GitIgnore != nil {
-		t.Fatalf("whole-file Managed ownership must skip section planning: %#v", plan.GitIgnore)
+}
+
+func TestBuildPlanReplacesRemovedManagedGitIgnoreWithGeneratedSection(t *testing.T) {
+	tests := []struct {
+		name    string
+		target  string
+		current string
+	}{
+		{
+			name:    "former Managed target-owned lines do not survive",
+			target:  GitIgnorePath,
+			current: "node_modules/\nlocal-only\n",
+		},
+		{
+			name:    "normalized stale owner with malformed marker is not scanned",
+			target:  ".gitignore/.",
+			current: "# start driftline from old/repo/" + ContractPath + "\nunterminated\n",
+		},
 	}
-	change := planChange(t, plan, StatusSynced, "tool.ignore")
-	if change.Target != GitIgnorePath || plan.HasDrift() {
-		t.Fatalf("unexpected whole-file Managed plan: %#v", plan)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			targetDir := t.TempDir()
+			writePlanFile(t, targetDir, SyncManifestPath, syncManifestTOML(`[files.tool]
+ignore = "`+tt.target+`"
+`))
+			writePlanFile(t, targetDir, GitIgnorePath, tt.current)
+			client := newPlanSourceClient(`version = 2
+
+[gitignore]
+entries = [".env"]
+`, nil)
+
+			plan, err := BuildPlan(PlanOptions{TargetDir: targetDir, Source: client})
+			if err != nil {
+				t.Fatalf("build plan failed: %v", err)
+			}
+
+			remove := planChange(t, plan, StatusRemove, "tool.ignore")
+			if remove.Target != GitIgnorePath || !remove.DeletesTarget || remove.WritesTarget {
+				t.Fatalf("unexpected former Managed removal: %#v", remove)
+			}
+			assertPlanHasChange(t, plan, StatusSyncManifestRemove, "tool.ignore", "remove Sync manifest entry")
+			change := plan.GitIgnore
+			if change == nil || change.Status != StatusAdd || change.Reason != "generated section is missing" {
+				t.Fatalf("unexpected generated replacement: %#v", change)
+			}
+			if change.TargetMissing || string(change.OriginalBytes) != tt.current {
+				t.Fatalf("replacement must retain current target state for stale validation: %#v", change)
+			}
+			want := planGitIgnoreBlock("y-writings/source-repo", ".env")
+			if string(change.DesiredBytes) != want {
+				t.Fatalf("replacement bytes = %q, want generated block only %q", change.DesiredBytes, want)
+			}
+		})
+	}
+}
+
+func TestBuildPlanRemovesManagedGitIgnoreWithoutSectionPlanning(t *testing.T) {
+	tests := []struct {
+		name     string
+		contract string
+	}{
+		{name: "absent config", contract: "version = 2\n"},
+		{name: "explicit empty config", contract: "version = 2\n\n[gitignore]\nentries = []\n"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			targetDir := t.TempDir()
+			writePlanFile(t, targetDir, SyncManifestPath, syncManifestTOML(`[files.tool]
+ignore = ".gitignore"
+`))
+			writePlanFile(t, targetDir, GitIgnorePath, "# start driftline from old/repo/"+ContractPath+"\nunterminated\n")
+
+			plan, err := BuildPlan(PlanOptions{TargetDir: targetDir, Source: newPlanSourceClient(tt.contract, nil)})
+			if err != nil {
+				t.Fatalf("build plan failed: %v", err)
+			}
+
+			remove := planChange(t, plan, StatusRemove, "tool.ignore")
+			if remove.Target != GitIgnorePath || !remove.DeletesTarget || remove.WritesTarget {
+				t.Fatalf("unexpected Managed removal: %#v", remove)
+			}
+			assertPlanHasChange(t, plan, StatusSyncManifestRemove, "tool.ignore", "remove Sync manifest entry")
+			if plan.GitIgnore != nil {
+				t.Fatalf("inactive config must not add a dedicated .gitignore change: %#v", plan.GitIgnore)
+			}
+		})
+	}
+}
+
+func TestBuildPlanManagedToTemplateGitIgnoreUsesCurrentBytesForSection(t *testing.T) {
+	tests := []struct {
+		name       string
+		current    string
+		wantStatus Status
+		want       string
+	}{
+		{
+			name:       "append",
+			current:    "local-only\n",
+			wantStatus: StatusAdd,
+			want:       "local-only\n\n" + planGitIgnoreBlock("y-writings/source-repo", ".env"),
+		},
+		{
+			name:       "replace",
+			current:    planGitIgnoreBlock("old/repo", "old-entry"),
+			wantStatus: StatusUpdate,
+			want:       planGitIgnoreBlock("y-writings/source-repo", ".env"),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			targetDir := t.TempDir()
+			writePlanFile(t, targetDir, SyncManifestPath, syncManifestTOML(`[files.tool]
+ignore = ".gitignore/."
+`))
+			writePlanFile(t, targetDir, GitIgnorePath, tt.current)
+			client := newPlanSourceClient(`version = 2
+
+[gitignore]
+entries = [".env"]
+
+[files.tool]
+ignore = { path = "./.gitignore", mode = "template" }
+`, nil)
+
+			plan, err := BuildPlan(PlanOptions{TargetDir: targetDir, Source: client})
+			if err != nil {
+				t.Fatalf("build plan failed: %v", err)
+			}
+
+			transition := planChange(t, plan, StatusModeTransition, "tool.ignore")
+			if transition.Target != GitIgnorePath || transition.WritesTarget || transition.DeletesTarget {
+				t.Fatalf("Managed-to-Template transition must leave the file for section planning: %#v", transition)
+			}
+			assertPlanHasChange(t, plan, StatusSyncManifestRemove, "tool.ignore", "remove Sync manifest entry")
+			change := plan.GitIgnore
+			if change == nil || change.Status != tt.wantStatus || change.TargetMissing {
+				t.Fatalf("unexpected dedicated section change: %#v", change)
+			}
+			if string(change.OriginalBytes) != tt.current || string(change.DesiredBytes) != tt.want {
+				t.Fatalf("dedicated change did not transform current bytes: %#v", change)
+			}
+		})
+	}
+}
+
+func TestBuildPlanManagedToTemplateGitIgnoreWithInactiveConfigSkipsSectionPlanning(t *testing.T) {
+	tests := []struct {
+		name     string
+		contract string
+		current  string
+	}{
+		{
+			name: "absent config leaves valid section untouched",
+			contract: `version = 2
+
+[files.tool]
+ignore = { path = ".gitignore", mode = "template" }
+`,
+			current: planGitIgnoreBlock("old/repo", "old-entry"),
+		},
+		{
+			name: "explicit empty config does not scan malformed marker",
+			contract: `version = 2
+
+[gitignore]
+entries = []
+
+[files.tool]
+ignore = { path = ".gitignore", mode = "template" }
+`,
+			current: "# start driftline from old/repo/" + ContractPath + "\nunterminated\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			targetDir := t.TempDir()
+			writePlanFile(t, targetDir, SyncManifestPath, syncManifestTOML(`[files.tool]
+ignore = ".gitignore"
+`))
+			writePlanFile(t, targetDir, GitIgnorePath, tt.current)
+
+			plan, err := BuildPlan(PlanOptions{TargetDir: targetDir, Source: newPlanSourceClient(tt.contract, nil)})
+			if err != nil {
+				t.Fatalf("build plan failed: %v", err)
+			}
+
+			transition := planChange(t, plan, StatusModeTransition, "tool.ignore")
+			if transition.Target != GitIgnorePath || transition.WritesTarget || transition.DeletesTarget {
+				t.Fatalf("unexpected Managed-to-Template transition: %#v", transition)
+			}
+			assertPlanHasChange(t, plan, StatusSyncManifestRemove, "tool.ignore", "remove Sync manifest entry")
+			if plan.GitIgnore != nil {
+				t.Fatalf("inactive config must leave former Managed bytes untouched: %#v", plan.GitIgnore)
+			}
+		})
 	}
 }
 

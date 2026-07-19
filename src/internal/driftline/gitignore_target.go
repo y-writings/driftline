@@ -8,7 +8,7 @@ import (
 
 var errOpenedTargetNotRegular = errors.New("opened target is not a regular file")
 
-func planGitIgnoreSectionChange(targetDir string, repository string, config *ContractGitIgnore) (*GitIgnoreSectionChange, error) {
+func planGitIgnoreSectionChange(targetDir string, repository string, config *ContractGitIgnore, replaceAfterManagedDelete bool) (*GitIgnoreSectionChange, error) {
 	targetPath, err := PathWithin(targetDir, GitIgnorePath, GitIgnorePath+" target")
 	if err != nil {
 		return nil, err
@@ -40,7 +40,13 @@ func planGitIgnoreSectionChange(targetDir string, repository string, config *Con
 		}
 	}
 
-	transformed, err := transformGitIgnoreSection(original, targetMissing, repository, config)
+	logicalCurrent := original
+	logicalTargetMissing := targetMissing
+	if replaceAfterManagedDelete {
+		logicalCurrent = nil
+		logicalTargetMissing = true
+	}
+	transformed, err := transformGitIgnoreSection(logicalCurrent, logicalTargetMissing, repository, config)
 	if err != nil {
 		return nil, err
 	}
