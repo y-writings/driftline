@@ -18,8 +18,11 @@
 
 - Create `src/internal/driftline/gitignore_section.go`: marker constants, exact line parser, renderer, and pure desired-byte transformation.
 - Create `src/internal/driftline/gitignore_section_test.go`: byte-level transformation, marker structure, raw entry, provenance, and line-ending tests.
-- Create `src/internal/driftline/gitignore_target.go`: no-follow target inspection, planning adapter, stale revalidation, temporary-file preparation, and atomic rename.
-- Create `src/internal/driftline/gitignore_target_test.go`: non-regular target, stale-state, mode preservation, and atomic preparation tests.
+- Create `src/internal/driftline/gitignore_target.go`: common planning adapter, stale revalidation, temporary-file preparation, and dedicated test seams.
+- Create `src/internal/driftline/gitignore_target_unix.go`, `gitignore_target_windows.go`, and `gitignore_target_unsupported.go`: platform-specific same-descriptor, no-follow reads and fail-closed fallback.
+- Create `src/internal/driftline/gitignore_target_test.go`, platform-specific target tests, and `gitignore_target_fifo_test.go`: regular-file, symlink/reparse-point, nonblocking FIFO, and unsupported-read coverage.
+- Create `src/internal/driftline/gitignore_commit_unix.go`, `gitignore_commit_windows.go`, and `gitignore_commit_unsupported.go`: platform-specific atomic-replacement capability and commit boundaries.
+- Create `src/internal/driftline/gitignore_rewrite_test.go` and `gitignore_commit_unix_test.go`: stale-state, mode, cleanup-error, and atomic replacement tests on supported Unix-like platforms.
 - Modify `src/internal/driftline/types.go`: Contract Gitignore model, dedicated plan change type, and `Plan` drift support types.
 - Modify `src/internal/driftline/config.go`: required-key validation, raw entry validation, and Contract path coexistence validation.
 - Modify `src/internal/driftline/config_test.go`: Contract parsing and invalid configuration coverage.
@@ -28,7 +31,8 @@
 - Modify `src/internal/driftline/target_repository.go`: prepare the Gitignore write before mutations and commit it before the Sync manifest.
 - Modify `src/internal/driftline/target_repository_test.go`: apply ordering, stale abort, failure, and no-rollback tests.
 - Modify `src/internal/driftline/commands/check.go`: print the complete plan and include Gitignore drift.
-- Modify `src/internal/driftline/commands/diff.go`: render the dedicated full-file Gitignore diff.
+- Modify `src/internal/driftline/commands/diff.go`: render the dedicated full-file Gitignore diff from planned byte snapshots with stable logical labels.
+- Create `src/internal/driftline/commands/diff_test.go`: snapshot isolation and header-only relabeling tests.
 - Modify `src/internal/driftline/commands/update.go`: print the complete plan before conflict return and after apply.
 - Modify `src/internal/driftline/commands/run.go`: describe the expanded command responsibilities in help output.
 - Modify `src/internal/driftline/commands/commands_test.go`: `init`, `check`, `diff`, `update`, malformed-marker, and binary-diff integration tests.
@@ -127,14 +131,14 @@ func TestLoadContractAcceptsExplicitEmptyGitIgnore(t *testing.T) {
 }
 ```
 
-Add `slices` to the test imports.
+Add `slices` to the test imports. Also add table-driven cases that reject `[GitIgnore]`, `[GITIGNORE]`, `[gitignore].Entries`, `[gitignore].ENTRIES`, and canonical-plus-noncanonical duplicate spellings as unknown keys. Add normalized coexistence cases for `./.gitignore`, `.gitignore/.`, and `.gitignore/./rules` so validation is exercised against the same normalized paths used by planning.
 
 - [ ] **Step 2: Run the focused tests and verify RED**
 
 Run:
 
 ```bash
-go test ./src/internal/driftline -run 'TestLoadContract(GitIgnore|RejectsInvalidGitIgnore|AcceptsExplicitEmptyGitIgnore)$' -count=1
+go test ./src/internal/driftline -run 'TestLoadContract(GitIgnore|RejectsInvalidGitIgnore|RejectsGitIgnoreKeyAliases|AcceptsExplicitEmptyGitIgnore)$' -count=1
 ```
 
 Expected: compilation fails because `Contract.GitIgnore` and `ContractGitIgnore` do not exist.
@@ -192,12 +196,31 @@ func isGitIgnoreStartMarker(line []byte) bool {
 
 - [ ] **Step 4: Validate authored presence, entries, and direct Contract paths**
 
-In `LoadContractBytes`, use TOML metadata to distinguish a missing key from an explicit empty array before calling `validateContract`:
+In `LoadContractBytes`, reject case-insensitive aliases before the ordinary undecoded-key check, then use TOML metadata to distinguish a missing key from an explicit empty array before calling `validateContract`. BurntSushi TOML can otherwise decode noncanonical casing into the canonical fields:
 
 ```go
+	if err := rejectContractGitIgnoreKeyAliases(metadata.Keys()); err != nil {
+		return contract, err
+	}
 	if metadata.IsDefined("gitignore") && !metadata.IsDefined("gitignore", "entries") {
 		return contract, errors.New("Contract gitignore must define entries")
 	}
+```
+
+Add the exact-spelling guard:
+
+```go
+func rejectContractGitIgnoreKeyAliases(keys []toml.Key) error {
+	for _, key := range keys {
+		if strings.EqualFold(key[0], "gitignore") && key[0] != "gitignore" {
+			return rejectUndecoded("Contract", []toml.Key{key[:1]})
+		}
+		if len(key) > 1 && key[0] == "gitignore" && strings.EqualFold(key[1], "entries") && key[1] != "entries" {
+			return rejectUndecoded("Contract", []toml.Key{key[:2]})
+		}
+	}
+	return nil
+}
 ```
 
 At the end of `validateContract`, call this new helper:
@@ -616,6 +639,14 @@ git commit -m "feat: transform generated gitignore section"
 **Files:**
 
 - Create: `src/internal/driftline/gitignore_target.go`
+- Create: `src/internal/driftline/gitignore_target_unix.go`
+- Create: `src/internal/driftline/gitignore_target_windows.go`
+- Create: `src/internal/driftline/gitignore_target_unsupported.go`
+- Create: `src/internal/driftline/gitignore_target_test.go`
+- Create: `src/internal/driftline/gitignore_target_unix_test.go`
+- Create: `src/internal/driftline/gitignore_target_windows_test.go`
+- Create: `src/internal/driftline/gitignore_target_unsupported_test.go`
+- Create: `src/internal/driftline/gitignore_target_fifo_test.go`
 - Modify: `src/internal/driftline/types.go:48-72`
 - Modify: `src/internal/driftline/plan.go:18-35,88-193,365-372`
 - Modify: `src/internal/driftline/plan_test.go`
@@ -676,7 +707,7 @@ func TestBuildPlanRejectsUnsupportedGitIgnoreTargetForNonEmptyEntries(t *testing
 			}
 			client := newPlanSourceClient("version = 2\n[gitignore]\nentries = [\".env\"]\n", nil)
 			_, err := BuildPlan(PlanOptions{TargetDir: targetDir, Source: client})
-			if err == nil || !strings.Contains(err.Error(), ".gitignore is not a regular file") {
+			if err == nil || !strings.Contains(err.Error(), ".gitignore must be a regular file") {
 				t.Fatalf("expected unsupported target error, got %v", err)
 			}
 		})
@@ -716,7 +747,7 @@ entries = [".env"]
 config = { path = "source.txt", mode = "managed" }
 `, map[string]string{"source.txt": "source\n"})
 	_, err := BuildPlan(PlanOptions{TargetDir: targetDir, Source: client})
-	if err == nil || !strings.Contains(err.Error(), "conflicts with generated .gitignore") {
+	if err == nil || !strings.Contains(err.Error(), "cannot be below .gitignore") {
 		t.Fatalf("expected resolved descendant collision, got %v", err)
 	}
 }
@@ -742,10 +773,10 @@ func TestBuildPlanRejectsUnreadableRegularGitIgnore(t *testing.T) {
 Run:
 
 ```bash
-go test ./src/internal/driftline -run 'TestBuildPlan(AddsMissingGitIgnoreSection|RemovesUndeclaredGitIgnoreSection|RejectsUnsupportedGitIgnoreTargetForNonEmptyEntries)$' -count=1
+go test ./src/internal/driftline -run 'Test(BuildPlan(AddsMissingGitIgnoreSection|RemovesUndeclaredGitIgnoreSection|RejectsUnsupportedGitIgnoreTargetForNonEmptyEntries)|ReadRegularFileNoFollow)' -count=1
 ```
 
-Expected: compilation fails because `Plan.GitIgnore`, `GitIgnoreSectionChange`, and `Plan.HasDrift` do not exist.
+Expected: compilation fails because the dedicated plan types and platform-specific read helpers do not exist.
 
 - [ ] **Step 3: Add the dedicated plan change type and drift method**
 
@@ -775,86 +806,171 @@ func (p Plan) HasDrift() bool {
 
 Update the existing planner test that calls `HasDrift(plan.Changes)` to call `plan.HasDrift()`.
 
-- [ ] **Step 4: Implement no-follow planning inspection**
+- [ ] **Step 4: Implement platform-specific no-follow planning inspection**
 
-Create `gitignore_target.go`:
+Keep path classification and transformation in common `gitignore_target.go`, but obtain bytes and permission bits only through `readRegularFileNoFollow`. `Lstat` is preliminary path classification; the helper revalidates the object it actually opened. Do not follow that descriptor check with `os.ReadFile` or any other pathname reopen:
 
 ```go
-package driftline
+var errOpenedTargetNotRegular = errors.New("opened target is not a regular file")
 
-import (
-	"errors"
-	"fmt"
-	"os"
-)
-
-type gitIgnoreTargetState struct {
-	missing bool
-	regular bool
-	path    string
-	bytes   []byte
-}
-
-func inspectGitIgnoreTarget(root string, requireRegular bool) (gitIgnoreTargetState, error) {
-	path, err := PathWithin(root, GitIgnorePath, "Gitignore target")
-	if err != nil {
-		return gitIgnoreTargetState{}, err
-	}
-	state := gitIgnoreTargetState{path: path}
-	info, err := os.Lstat(path)
-	if errors.Is(err, os.ErrNotExist) {
-		state.missing = true
-		return state, nil
-	}
-	if err != nil {
-		return state, fmt.Errorf("inspect %s: %w", GitIgnorePath, err)
-	}
-	if !info.Mode().IsRegular() {
-		if requireRegular {
-			return state, fmt.Errorf("%s is not a regular file", GitIgnorePath)
-		}
-		return state, nil
-	}
-	state.regular = true
-	state.bytes, err = os.ReadFile(path)
-	if err != nil {
-		return state, fmt.Errorf("read %s: %w", GitIgnorePath, err)
-	}
-	return state, nil
-}
-
-func planGitIgnoreSectionChange(root, repository string, config *ContractGitIgnore, replaceAfterManagedDelete bool) (*GitIgnoreSectionChange, error) {
-	requireRegular := config != nil && len(config.Entries) > 0
-	state, err := inspectGitIgnoreTarget(root, requireRegular)
+func planGitIgnoreSectionChange(targetDir string, repository string, config *ContractGitIgnore, replaceAfterManagedDelete bool) (*GitIgnoreSectionChange, error) {
+	targetPath, err := PathWithin(targetDir, GitIgnorePath, GitIgnorePath+" target")
 	if err != nil {
 		return nil, err
 	}
-	if !state.missing && !state.regular {
+
+	active := config != nil && len(config.Entries) > 0
+	targetMissing := false
+	info, err := os.Lstat(targetPath)
+	if errors.Is(err, os.ErrNotExist) {
+		targetMissing = true
+	} else if err != nil {
+		return nil, fmt.Errorf("inspect %s: %w", GitIgnorePath, err)
+	} else if !info.Mode().IsRegular() {
+		if active {
+			return nil, fmt.Errorf("%s must be a regular file when gitignore entries are configured", GitIgnorePath)
+		}
 		return nil, nil
 	}
-	transformBytes := state.bytes
-	transformMissing := state.missing
-	if replaceAfterManagedDelete {
-		transformBytes = nil
-		transformMissing = true
+
+	if targetMissing && !active {
+		return nil, nil
 	}
-	result, err := transformGitIgnoreSection(transformBytes, transformMissing, repository, config)
+
+	var original []byte
+	if !targetMissing {
+		original, _, err = readRegularFileNoFollow(targetPath)
+		if err != nil {
+			return nil, fmt.Errorf("read %s: %w", GitIgnorePath, err)
+		}
+	}
+
+	logicalCurrent := original
+	logicalTargetMissing := targetMissing
+	if replaceAfterManagedDelete {
+		logicalCurrent = nil
+		logicalTargetMissing = true
+	}
+	transformed, err := transformGitIgnoreSection(logicalCurrent, logicalTargetMissing, repository, config)
 	if err != nil {
 		return nil, err
 	}
-	if !result.Changed {
+	if !transformed.Changed {
 		return nil, nil
 	}
 	return &GitIgnoreSectionChange{
-		Status:        result.Status,
-		Reason:        result.Reason,
-		TargetPath:    state.path,
-		TargetMissing: state.missing,
-		OriginalBytes: append([]byte(nil), state.bytes...),
-		DesiredBytes:  result.DesiredBytes,
+		Status:        transformed.Status,
+		Reason:        transformed.Reason,
+		TargetPath:    targetPath,
+		TargetMissing: targetMissing,
+		OriginalBytes: original,
+		DesiredBytes:  transformed.DesiredBytes,
 	}, nil
 }
 ```
+
+On supported Unix-like systems, put the helper in `gitignore_target_unix.go` behind the exact supported build constraint. Open once with no-follow and nonblocking flags, verify the opened descriptor with `Stat`, then read from that same descriptor. `O_NONBLOCK` prevents a raced FIFO from hanging before the regular-file check:
+
+```go
+//go:build aix || android || darwin || dragonfly || freebsd || illumos || ios || linux || netbsd || openbsd || solaris
+
+package driftline
+
+import (
+	"io"
+	"os"
+	"syscall"
+)
+
+func readRegularFileNoFollow(path string) ([]byte, os.FileMode, error) {
+	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer file.Close()
+
+	info, err := file.Stat()
+	if err != nil {
+		return nil, 0, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, 0, errOpenedTargetNotRegular
+	}
+	data, err := io.ReadAll(file)
+	return data, info.Mode().Perm(), err
+}
+```
+
+On Windows, put the helper in `gitignore_target_windows.go`. Open the reparse point itself, reject reparse points and non-regular handles, and read bytes and mode from the same handle:
+
+```go
+//go:build windows
+
+package driftline
+
+import (
+	"io"
+	"os"
+	"syscall"
+)
+
+func readRegularFileNoFollow(path string) ([]byte, os.FileMode, error) {
+	pathPtr, err := syscall.UTF16PtrFromString(path)
+	if err != nil {
+		return nil, 0, &os.PathError{Op: "open", Path: path, Err: err}
+	}
+	handle, err := syscall.CreateFile(
+		pathPtr,
+		syscall.GENERIC_READ,
+		syscall.FILE_SHARE_READ|syscall.FILE_SHARE_WRITE|syscall.FILE_SHARE_DELETE,
+		nil,
+		syscall.OPEN_EXISTING,
+		syscall.FILE_FLAG_OPEN_REPARSE_POINT|syscall.FILE_FLAG_BACKUP_SEMANTICS,
+		0,
+	)
+	if err != nil {
+		return nil, 0, &os.PathError{Op: "open", Path: path, Err: err}
+	}
+
+	file := os.NewFile(uintptr(handle), path)
+	if file == nil {
+		syscall.CloseHandle(handle)
+		return nil, 0, &os.PathError{Op: "open", Path: path, Err: syscall.EINVAL}
+	}
+	defer file.Close()
+
+	info, err := file.Stat()
+	if err != nil {
+		return nil, 0, err
+	}
+	attributes, ok := info.Sys().(*syscall.Win32FileAttributeData)
+	if !ok || attributes.FileAttributes&syscall.FILE_ATTRIBUTE_REPARSE_POINT != 0 || !info.Mode().IsRegular() {
+		return nil, 0, errOpenedTargetNotRegular
+	}
+	data, err := io.ReadAll(file)
+	return data, info.Mode().Perm(), err
+}
+```
+
+All remaining platforms compile `gitignore_target_unsupported.go` and fail safe when a regular target must be read:
+
+```go
+//go:build !aix && !android && !darwin && !dragonfly && !freebsd && !illumos && !ios && !linux && !netbsd && !openbsd && !solaris && !windows
+
+package driftline
+
+import (
+	"fmt"
+	"os"
+	"runtime"
+)
+
+func readRegularFileNoFollow(string) ([]byte, os.FileMode, error) {
+	return nil, 0, fmt.Errorf("safe .gitignore target reads are unsupported on %s", runtime.GOOS)
+}
+```
+
+Add common regular-file/mode coverage, Unix final-symlink and FIFO rejection, Windows reparse-point rejection, and unsupported-platform error coverage in the corresponding build-tagged test files. The FIFO tests use the narrower Darwin, DragonFly, FreeBSD, Linux, NetBSD, and OpenBSD build boundary where `syscall.Mkfifo` is available.
 
 - [ ] **Step 5: Integrate ordinary Gitignore planning**
 
@@ -900,7 +1016,7 @@ Remove the old unconditional synced sentinel block. Keep `HasDrift(changes []Cha
 Run:
 
 ```bash
-gofmt -w src/internal/driftline/types.go src/internal/driftline/plan.go src/internal/driftline/plan_test.go src/internal/driftline/gitignore_target.go
+gofmt -w src/internal/driftline/types.go src/internal/driftline/plan.go src/internal/driftline/plan_test.go src/internal/driftline/gitignore_target*.go
 go test ./src/internal/driftline -run 'TestBuildPlan' -count=1
 go test ./src/internal/driftline -count=1
 go test ./... -count=1
@@ -911,7 +1027,7 @@ Expected: all commands pass.
 - [ ] **Step 7: Commit basic planner integration**
 
 ```bash
-git add src/internal/driftline/types.go src/internal/driftline/plan.go src/internal/driftline/plan_test.go src/internal/driftline/gitignore_target.go
+git add src/internal/driftline/types.go src/internal/driftline/plan.go src/internal/driftline/plan_test.go src/internal/driftline/gitignore_target.go src/internal/driftline/gitignore_target_unix.go src/internal/driftline/gitignore_target_windows.go src/internal/driftline/gitignore_target_unsupported.go src/internal/driftline/gitignore_target_test.go src/internal/driftline/gitignore_target_unix_test.go src/internal/driftline/gitignore_target_windows_test.go src/internal/driftline/gitignore_target_unsupported_test.go src/internal/driftline/gitignore_target_fifo_test.go
 git commit -m "feat: plan gitignore section changes"
 ```
 
@@ -1042,12 +1158,14 @@ config = { path = "source.txt", mode = "managed" }
 }
 ```
 
+Also cover a currently Managed key whose next Contract entry is Template at a different source path. With non-empty Gitignore entries, section planning must use and preserve the former `.gitignore` target bytes; with absent or empty entries, it must leave those bytes untouched and skip marker inspection. Managed-to-Template classification follows the current File key and mode, not whether the Template's new source path still equals `.gitignore`.
+
 - [ ] **Step 2: Run the transition test and verify RED**
 
 Run:
 
 ```bash
-go test ./src/internal/driftline -run 'TestBuildPlanGitIgnoreOwnershipTransitions' -count=1
+go test ./src/internal/driftline -run 'TestBuildPlan(GitIgnoreOwnershipTransitions|ManagedToRenamedTemplateGitIgnore)' -count=1
 ```
 
 Expected: at least the Managed-to-section and Managed-to-Template cases fail because generic section planning uses the wrong pre-transition bytes or removes a section during a leave-untouched transition.
@@ -1088,7 +1206,7 @@ Replace the ordinary call added in Task 3 with explicit precedence:
 	}
 ```
 
-Keep coexistence validation scoped to desired Managed files, so `currentGitIgnoreKey` may be removed or transition to Template.
+Keep coexistence validation scoped to desired Managed files, so `currentGitIgnoreKey` may be removed or transition to Template. Determine the Template transition from the current File key's next mode even when that Template now has a different source path; do not add a `source.Path == GitIgnorePath` condition.
 
 - [ ] **Step 4: Run transition and full package tests**
 
@@ -1114,382 +1232,356 @@ git commit -m "feat: handle gitignore ownership transitions"
 **Files:**
 
 - Modify: `src/internal/driftline/gitignore_target.go`
-- Create: `src/internal/driftline/gitignore_target_test.go`
+- Create: `src/internal/driftline/gitignore_rewrite_test.go`
+- Create: `src/internal/driftline/gitignore_commit_unix.go`
+- Create: `src/internal/driftline/gitignore_commit_unix_test.go`
+- Create: `src/internal/driftline/gitignore_commit_windows.go`
+- Create: `src/internal/driftline/gitignore_commit_unsupported.go`
+- Modify: `src/internal/driftline/gitignore_target_windows_test.go`
+- Modify: `src/internal/driftline/gitignore_target_unsupported_test.go`
 - Modify: `src/internal/driftline/target_repository.go:10-53`
 - Modify: `src/internal/driftline/target_repository_test.go`
 
-- [ ] **Step 1: Write failing stale-state and permission tests**
+- [ ] **Step 1: Write failing stale-state, atomicity, mode, and cleanup tests**
 
-Create `gitignore_target_test.go`:
+Create `gitignore_rewrite_test.go` with the supported Unix-like build constraint. Cover these exact responsibilities:
 
-```go
-package driftline
+- `TestPrepareGitIgnoreRewriteRejectsAppearedMissingTarget`: regular, symlink, and directory states all fail stale without creating a temporary file.
+- `TestPrepareGitIgnoreRewriteRejectsChangedRegularTarget`: changed bytes, missing, live symlink, broken symlink, and directory states all fail stale; no external bytes are read.
+- `TestPrepareGitIgnoreRewritePreservesRevalidationErrorCause`: wrapped read errors remain discoverable with `errors.Is`.
+- `TestPrepareGitIgnoreRewriteDefersAtomicReplacement` and `TestPrepareGitIgnoreRewriteCleanupRemovesUncommittedTemp`: preparation writes only the sibling temporary file, commit renames that file, and cleanup is repeatable.
+- `TestPrepareGitIgnoreRewritePreservesExistingMode`, `TestPrepareGitIgnoreRewriteNewModeMatchesUmaskApplied0644`, and `TestPrepareGitIgnoreRewriteCommitsEmptyFileInsteadOfDeleting`: existing permission bits survive, new files use `0644` subject to umask, and an empty desired file remains present.
+- `TestPrepareGitIgnoreRewriteJoinsWriteCloseAndRemoveFailures` and `TestPrepareGitIgnoreRewriteCleanupSurfacesFailureAndRemainsIdempotent`: injected write, close, and remove errors are joined rather than discarded, and failed cleanup can be retried.
 
-import (
-	"errors"
-	"os"
-	"path/filepath"
-	"strings"
-	"testing"
-)
-
-func TestPrepareGitIgnoreRewriteRejectsStaleTarget(t *testing.T) {
-	root := t.TempDir()
-	path := filepath.Join(root, GitIgnorePath)
-	if err := os.WriteFile(path, []byte("current\n"), 0o640); err != nil {
-		t.Fatal(err)
-	}
-	change := GitIgnoreSectionChange{TargetPath: path, OriginalBytes: []byte("planned\n"), DesiredBytes: []byte("desired\n")}
-	_, _, err := PrepareGitIgnoreRewrite(change)
-	if err == nil || !strings.Contains(err.Error(), "stale .gitignore") {
-		t.Fatalf("expected stale error, got %v", err)
-	}
-	if got, err := os.ReadFile(path); err != nil || string(got) != "current\n" {
-		t.Fatalf("stale target changed: %q err=%v", got, err)
-	}
-}
-
-func TestPrepareGitIgnoreRewriteCommitsAtomicallyAndPreservesMode(t *testing.T) {
-	root := t.TempDir()
-	path := filepath.Join(root, GitIgnorePath)
-	if err := os.WriteFile(path, []byte("current\n"), 0o640); err != nil {
-		t.Fatal(err)
-	}
-	commit, cleanup, err := PrepareGitIgnoreRewrite(GitIgnoreSectionChange{
-		TargetPath: path, OriginalBytes: []byte("current\n"), DesiredBytes: []byte("desired\n"),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer cleanup()
-	if got, err := os.ReadFile(path); err != nil || string(got) != "current\n" {
-		t.Fatalf("prepare changed target: %q err=%v", got, err)
-	}
-	if err := commit(); err != nil {
-		t.Fatal(err)
-	}
-	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.Mode().Perm() != 0o640 {
-		t.Fatalf("mode was not preserved: mode=%v", info.Mode())
-	}
-	if got, err := os.ReadFile(path); err != nil || string(got) != "desired\n" {
-		t.Fatalf("commit did not replace target: %q err=%v", got, err)
-	}
-}
-```
-
-Add state-change, new-file, and cleanup cases:
-
-```go
-func TestPrepareGitIgnoreRewriteRejectsPathStateChanges(t *testing.T) {
-	tests := []struct {
-		name    string
-		change  func(root string) GitIgnoreSectionChange
-		mutate  func(t *testing.T, root string)
-	}{
-		{
-			name: "missing became present",
-			change: func(root string) GitIgnoreSectionChange {
-				return GitIgnoreSectionChange{TargetPath: filepath.Join(root, GitIgnorePath), TargetMissing: true, DesiredBytes: []byte("desired\n")}
-			},
-			mutate: func(t *testing.T, root string) {
-				if err := os.WriteFile(filepath.Join(root, GitIgnorePath), []byte("new\n"), 0o644); err != nil { t.Fatal(err) }
-			},
-		},
-		{
-			name: "regular became missing",
-			change: func(root string) GitIgnoreSectionChange {
-				return GitIgnoreSectionChange{TargetPath: filepath.Join(root, GitIgnorePath), OriginalBytes: []byte("old\n"), DesiredBytes: []byte("desired\n")}
-			},
-			mutate: func(t *testing.T, root string) {},
-		},
-		{
-			name: "regular became symlink",
-			change: func(root string) GitIgnoreSectionChange {
-				return GitIgnoreSectionChange{TargetPath: filepath.Join(root, GitIgnorePath), OriginalBytes: []byte("old\n"), DesiredBytes: []byte("desired\n")}
-			},
-			mutate: func(t *testing.T, root string) {
-				if err := os.Symlink(filepath.Join(t.TempDir(), "outside"), filepath.Join(root, GitIgnorePath)); err != nil { t.Fatal(err) }
-			},
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			root := t.TempDir()
-			change := tt.change(root)
-			tt.mutate(t, root)
-			if _, _, err := PrepareGitIgnoreRewrite(change); err == nil || !strings.Contains(err.Error(), "stale .gitignore") {
-				t.Fatalf("expected stale path-state error, got %v", err)
-			}
-		})
-	}
-}
-
-func TestPrepareGitIgnoreRewriteCreatesNewFileAndCleansUncommittedTemp(t *testing.T) {
-	root := t.TempDir()
-	path := filepath.Join(root, GitIgnorePath)
-	change := GitIgnoreSectionChange{TargetPath: path, TargetMissing: true, DesiredBytes: []byte("desired\n")}
-	commit, cleanup, err := PrepareGitIgnoreRewrite(change)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := cleanup(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("cleanup created target: %v", err)
-	}
-	commit, cleanup, err = PrepareGitIgnoreRewrite(change)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer cleanup()
-	if err := commit(); err != nil {
-		t.Fatal(err)
-	}
-	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.Mode().Perm()&^0o644 != 0 || info.Mode().Perm()&0o200 == 0 {
-		t.Fatalf("new mode is not 0644 subject to umask: mode=%v", info.Mode())
-	}
-}
-```
+Create `gitignore_commit_unix_test.go` to prove the prepared file is atomically renamed over the target and a failed rename leaves the temporary file for cleanup. Extend the Windows and unsupported-platform tests to prove both the direct preparation path and repository apply fail before creating a temporary file or mutating any target.
 
 - [ ] **Step 2: Run target preparation tests and verify RED**
 
 Run:
 
 ```bash
-go test ./src/internal/driftline -run 'TestPrepareGitIgnoreRewrite' -count=1
+go test ./src/internal/driftline -run 'Test(PrepareGitIgnoreRewrite|CommitAtomicGitIgnoreReplacement)' -count=1
 ```
 
-Expected: compilation fails because `PrepareGitIgnoreRewrite` is undefined.
+Expected: compilation fails because `PrepareGitIgnoreRewrite` and the platform-specific atomic capability and commit helpers are undefined.
 
-- [ ] **Step 3: Implement stale revalidation and temporary-file preparation**
+- [ ] **Step 3: Implement gated stale revalidation and temporary-file preparation**
 
-Add to `gitignore_target.go`:
+Add the common preparation code to `gitignore_target.go`. `PrepareGitIgnoreRewrite` performs its own capability check before inspecting the target or allocating a temporary file. Existing targets are revalidated with the same no-follow helper from Task 3, so bytes and mode come from one opened descriptor rather than a later pathname reopen:
 
 ```go
-func PrepareGitIgnoreRewrite(change GitIgnoreSectionChange) (commit func() error, cleanup func() error, err error) {
-	mode, err := revalidateGitIgnoreTarget(change)
-	if err != nil {
+type gitIgnoreTempOperations struct {
+	write  func(*os.File, []byte) error
+	close  func(*os.File) error
+	remove func(string) error
+}
+
+func PrepareGitIgnoreRewrite(change GitIgnoreSectionChange) (commit, cleanup func() error, err error) {
+	return prepareGitIgnoreRewriteWithOperations(change, gitIgnoreTempOperations{})
+}
+
+func prepareGitIgnoreRewriteWithOperations(change GitIgnoreSectionChange, ops gitIgnoreTempOperations) (commit, cleanup func() error, err error) {
+	if err := validateAtomicGitIgnoreReplacement(); err != nil {
 		return nil, nil, err
 	}
-	temp, err := createGitIgnoreTemp(filepath.Dir(change.TargetPath), mode)
+	if ops.write == nil {
+		ops.write = func(file *os.File, data []byte) error {
+			_, err := file.Write(data)
+			return err
+		}
+	}
+	if ops.close == nil {
+		ops.close = (*os.File).Close
+	}
+	if ops.remove == nil {
+		ops.remove = os.Remove
+	}
+
+	mode := os.FileMode(0o644)
+	if change.TargetMissing {
+		_, err := os.Lstat(change.TargetPath)
+		if err == nil {
+			return nil, nil, staleGitIgnorePlanError("target appeared", nil)
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return nil, nil, staleGitIgnorePlanError("inspect target", err)
+		}
+	} else {
+		current, currentMode, err := readRegularFileNoFollow(change.TargetPath)
+		if err != nil {
+			return nil, nil, staleGitIgnorePlanError("read target", err)
+		}
+		if !bytes.Equal(current, change.OriginalBytes) {
+			return nil, nil, staleGitIgnorePlanError("target content changed", nil)
+		}
+		mode = currentMode
+	}
+
+	temp, err := createGitIgnoreTemp(filepath.Dir(change.TargetPath))
 	if err != nil {
-		return nil, nil, fmt.Errorf("create .gitignore temp file: %w", err)
+		return nil, nil, fmt.Errorf("create %s temp file: %w", GitIgnorePath, err)
 	}
 	tempName := temp.Name()
 	cleanup = func() error {
-		err := os.Remove(tempName)
+		err := ops.remove(tempName)
 		if errors.Is(err, os.ErrNotExist) {
 			return nil
 		}
-		return err
+		return gitIgnoreTempOperationError("remove", err)
 	}
-	fail := func(err error) (func() error, func() error, error) {
-		temp.Close()
-		cleanup()
-		return nil, nil, err
+	fail := func(primary error) (func() error, func() error, error) {
+		closeErr := gitIgnoreTempOperationError("close", ops.close(temp))
+		return nil, nil, errors.Join(primary, closeErr, cleanup())
 	}
-	if _, err := temp.Write(change.DesiredBytes); err != nil {
-		return fail(fmt.Errorf("write .gitignore temp file: %w", err))
-	}
+
 	if !change.TargetMissing {
 		if err := temp.Chmod(mode); err != nil {
-			return fail(fmt.Errorf("chmod .gitignore temp file: %w", err))
+			return fail(fmt.Errorf("chmod %s temp file: %w", GitIgnorePath, err))
 		}
 	}
-	if err := temp.Close(); err != nil {
-		cleanup()
-		return nil, nil, fmt.Errorf("close .gitignore temp file: %w", err)
+	if err := ops.write(temp, change.DesiredBytes); err != nil {
+		return fail(fmt.Errorf("write %s temp file: %w", GitIgnorePath, err))
 	}
+	if err := ops.close(temp); err != nil {
+		return nil, nil, errors.Join(gitIgnoreTempOperationError("close", err), cleanup())
+	}
+
 	commit = func() error {
-		if err := os.Rename(tempName, change.TargetPath); err != nil {
-			return fmt.Errorf("commit .gitignore: %w", err)
+		if err := commitAtomicGitIgnoreReplacement(tempName, change.TargetPath); err != nil {
+			return fmt.Errorf("commit %s rewrite: %w", GitIgnorePath, err)
 		}
 		return nil
 	}
 	return commit, cleanup, nil
 }
 
-func createGitIgnoreTemp(directory string, mode os.FileMode) (*os.File, error) {
-	for attempt := 0; attempt < 100; attempt++ {
+func gitIgnoreTempOperationError(operation string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("%s %s temp file: %w", operation, GitIgnorePath, err)
+}
+
+func createGitIgnoreTemp(dir string) (*os.File, error) {
+	for range 100 {
 		var suffix [8]byte
 		if _, err := rand.Read(suffix[:]); err != nil {
 			return nil, err
 		}
-		name := filepath.Join(directory, fmt.Sprintf(".gitignore.driftline-%x", suffix))
-		file, err := os.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
+		path := filepath.Join(dir, fmt.Sprintf(".gitignore-%x.tmp", suffix))
+		file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o644)
 		if errors.Is(err, os.ErrExist) {
 			continue
 		}
 		return file, err
 	}
-	return nil, errors.New("allocate unique .gitignore temp file")
+	return nil, fmt.Errorf("could not allocate a unique temp file")
 }
 
-func revalidateGitIgnoreTarget(change GitIgnoreSectionChange) (os.FileMode, error) {
-	info, err := os.Lstat(change.TargetPath)
-	if change.TargetMissing {
-		if errors.Is(err, os.ErrNotExist) {
-			return 0o644, nil
-		}
-		if err != nil {
-			return 0, fmt.Errorf("inspect %s: %w", GitIgnorePath, err)
-		}
-		return 0, fmt.Errorf("stale %s: target appeared after planning", GitIgnorePath)
+func staleGitIgnorePlanError(reason string, cause error) error {
+	if cause != nil {
+		return fmt.Errorf("stale %s plan: %s: %w", GitIgnorePath, reason, cause)
 	}
-	if errors.Is(err, os.ErrNotExist) {
-		return 0, fmt.Errorf("stale %s: target disappeared after planning", GitIgnorePath)
-	}
-	if err != nil {
-		return 0, fmt.Errorf("inspect %s: %w", GitIgnorePath, err)
-	}
-	if !info.Mode().IsRegular() {
-		return 0, fmt.Errorf("stale %s: target is no longer a regular file", GitIgnorePath)
-	}
-	current, err := os.ReadFile(change.TargetPath)
-	if err != nil {
-		return 0, fmt.Errorf("read %s: %w", GitIgnorePath, err)
-	}
-	if !bytes.Equal(current, change.OriginalBytes) {
-		return 0, fmt.Errorf("stale %s: target changed after planning", GitIgnorePath)
-	}
-	return info.Mode().Perm(), nil
+	return fmt.Errorf("stale %s plan: %s", GitIgnorePath, reason)
 }
 ```
 
-Add `bytes`, `crypto/rand`, and `path/filepath` imports. Creating a new temp file with `os.OpenFile(..., 0644)` applies the process umask; replacing an existing file calls `Chmod` afterward to restore its exact permission bits.
+The temporary file is created with `0644`, allowing the process umask to determine new-file permissions. For an existing target, call `Chmod` with the descriptor-observed permission bits before writing. The operation seam exists only to inject write, close, and remove failures; the production entry point remains `PrepareGitIgnoreRewrite`.
 
-- [ ] **Step 4: Write failing apply-order and Sync commit tests**
-
-Add to `target_repository_test.go`:
+Put the capability and commit implementation behind platform build boundaries. Supported Unix-like platforms use atomic same-directory rename:
 
 ```go
-func TestTargetRepositoryApplyRejectsStaleGitIgnoreBeforeManagedWrite(t *testing.T) {
-	targetDir := t.TempDir()
-	writeTargetRepositoryTestFile(t, targetDir, SyncManifestPath, syncManifestTOMLForApplyTest(""))
-	writeTargetRepositoryTestFile(t, targetDir, GitIgnorePath, "changed-after-plan\n")
-	managedPath := filepath.Join(targetDir, "managed.txt")
-	plan := Plan{
-		Changes: []Change{{ID: "tool.config", Target: "managed.txt", TargetPath: managedPath, SourceBytes: []byte("source\n"), Status: StatusAdd, WritesTarget: true}},
-		GitIgnore: &GitIgnoreSectionChange{
-			Status: StatusUpdate, TargetPath: filepath.Join(targetDir, GitIgnorePath), OriginalBytes: []byte("planned\n"), DesiredBytes: []byte("desired\n"),
-		},
-	}
-	err := (TargetRepository{Root: targetDir}).Apply(plan)
-	if err == nil || !strings.Contains(err.Error(), "stale .gitignore") {
-		t.Fatalf("expected stale Gitignore error, got %v", err)
-	}
-	if _, err := os.Stat(managedPath); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("Managed write happened before Gitignore preflight: %v", err)
-	}
+//go:build aix || android || darwin || dragonfly || freebsd || illumos || ios || linux || netbsd || openbsd || solaris
+
+package driftline
+
+import "os"
+
+func validateAtomicGitIgnoreReplacement() error {
+	return nil
 }
 
-func TestTargetRepositoryApplyDoesNotCommitSyncManifestWhenGitIgnoreCommitFails(t *testing.T) {
-	targetDir := t.TempDir()
-	original := syncManifestTOMLForApplyTest("")
-	writeTargetRepositoryTestFile(t, targetDir, SyncManifestPath, original)
-	managedPath := filepath.Join(targetDir, "managed.txt")
-	plan := Plan{
-		Changes: []Change{
-			{ID: "tool.config", Status: StatusSyncManifestAdd},
-			{ID: "tool.config", Target: "managed.txt", TargetPath: managedPath, SourceBytes: []byte("source\n"), Status: StatusAdd, WritesTarget: true},
-		},
-		GitIgnore: &GitIgnoreSectionChange{Status: StatusAdd, TargetPath: filepath.Join(targetDir, GitIgnorePath), TargetMissing: true, DesiredBytes: []byte("generated\n")},
-		NextSyncManifest: SyncManifest{Version: 2, Source: SyncSource{Repository: "y-writings/source-repo", Ref: "main"}, Files: map[string]map[string]string{"tool": {"config": "managed.txt"}}},
-	}
-	repository := TargetRepository{
-		Root: targetDir,
-		prepareGitIgnoreRewrite: func(GitIgnoreSectionChange) (func() error, func() error, error) {
-			return func() error { return errors.New("commit failed") }, func() error { return nil }, nil
-		},
-	}
-	if err := repository.Apply(plan); err == nil || err.Error() != "commit failed" {
-		t.Fatalf("expected Gitignore commit error, got %v", err)
-	}
-	if got := readTargetRepositoryTestFile(t, targetDir, SyncManifestPath); got != original {
-		t.Fatalf("Sync manifest committed after Gitignore failure:\n%s", got)
-	}
-	if got := readTargetRepositoryTestFile(t, targetDir, "managed.txt"); got != "source\n" {
-		t.Fatalf("existing no-rollback behavior changed: %q", got)
-	}
+func commitAtomicGitIgnoreReplacement(tempPath, targetPath string) error {
+	return os.Rename(tempPath, targetPath)
 }
 ```
+
+Windows fails closed because the implementation has no documented atomic replacement primitive there:
+
+```go
+//go:build windows
+
+package driftline
+
+import "fmt"
+
+func validateAtomicGitIgnoreReplacement() error {
+	return fmt.Errorf("atomic %s replacement is unsupported on windows", GitIgnorePath)
+}
+
+func commitAtomicGitIgnoreReplacement(string, string) error {
+	return validateAtomicGitIgnoreReplacement()
+}
+```
+
+All other platforms compile the unsupported fallback and identify the runtime platform:
+
+```go
+//go:build !aix && !android && !darwin && !dragonfly && !freebsd && !illumos && !ios && !linux && !netbsd && !openbsd && !solaris && !windows
+
+package driftline
+
+import (
+	"fmt"
+	"runtime"
+)
+
+func validateAtomicGitIgnoreReplacement() error {
+	return fmt.Errorf("atomic %s replacement is unsupported on %s", GitIgnorePath, runtime.GOOS)
+}
+
+func commitAtomicGitIgnoreReplacement(string, string) error {
+	return validateAtomicGitIgnoreReplacement()
+}
+```
+
+- [ ] **Step 4: Write failing capability, apply-order, cleanup, and Sync commit tests**
+
+Add repository-level tests with separate seams for capability validation, Sync preparation, and Gitignore preparation:
+
+- A conflicted plan returns before capability validation or either preparation step.
+- Unsupported atomic replacement returns before Sync temporary-file preparation, Gitignore preparation, Managed deletes, or Managed writes.
+- A plan without a Gitignore change skips capability validation and preserves ordinary Managed apply behavior.
+- Stale Gitignore state and Gitignore preparation failure abort before any Managed mutation.
+- Gitignore commit failure leaves already-completed Managed mutations in place but prevents the Sync manifest commit.
+- Gitignore cleanup failures are returned, and commit plus Gitignore cleanup plus Sync cleanup failures remain individually discoverable through `errors.Is`.
+- Successful Managed-to-Gitignore replacement and Gitignore-only updates preserve the existing apply ordering and do not rewrite an unchanged Sync manifest.
+
+The platform tests must invoke the real Windows and unsupported capability helpers. The common repository tests inject the seams explicitly so host support does not hide ordering failures.
 
 - [ ] **Step 5: Run apply tests and verify RED**
 
 Run:
 
 ```bash
-go test ./src/internal/driftline -run 'TestTargetRepositoryApply(RejectsStaleGitIgnoreBeforeManagedWrite|DoesNotCommitSyncManifestWhenGitIgnoreCommitFails)$' -count=1
+go test ./src/internal/driftline -run 'TestTargetRepositoryApply' -count=1
 ```
 
-Expected: tests fail because `Apply` does not prepare or commit `Plan.GitIgnore`, and `TargetRepository` lacks the injected preparation function.
+Expected: tests fail because `Apply` lacks the early capability gate, independent preparation seams, cleanup-error joining, and Gitignore commit ordering.
 
 - [ ] **Step 6: Integrate prepare-before-mutation and commit-before-Sync ordering**
 
-Extend `TargetRepository`:
+Extend `TargetRepository` and use a named return error so deferred cleanup failures can be joined. The capability gate must run after conflict rejection but before root normalization or Sync manifest temporary-file preparation:
 
 ```go
 type TargetRepository struct {
-	Root                    string
-	prepareGitIgnoreRewrite func(GitIgnoreSectionChange) (func() error, func() error, error)
+	Root                               string
+	validateAtomicGitIgnoreReplacement func() error
+	prepareSyncManifestRewrite         func(string, SyncManifest) (func() error, func() error, error)
+	prepareGitIgnoreRewrite            func(GitIgnoreSectionChange) (func() error, func() error, error)
 }
-```
 
-After preparing the optional Sync manifest rewrite and before sorting/applying Managed changes, add:
+func (r TargetRepository) Apply(plan Plan) (err error) {
+	if plan.HasConflicts() {
+		return fmt.Errorf("cannot apply conflicted sync plan")
+	}
+	if plan.GitIgnore != nil {
+		validate := r.validateAtomicGitIgnoreReplacement
+		if validate == nil {
+			validate = validateAtomicGitIgnoreReplacement
+		}
+		if err := validate(); err != nil {
+			return err
+		}
+	}
+	root := r.Root
+	if root == "" {
+		root = "."
+	}
 
-```go
+	var commitSyncManifest func() error
+	if planHasSyncManifestChanges(plan.Changes) {
+		prepare := r.prepareSyncManifestRewrite
+		if prepare == nil {
+			prepare = PrepareSyncManifestRewrite
+		}
+		commit, cleanup, prepareErr := prepare(root, plan.NextSyncManifest)
+		if prepareErr != nil {
+			return prepareErr
+		}
+		defer func() {
+			if cleanupErr := cleanup(); cleanupErr != nil {
+				err = errors.Join(err, fmt.Errorf("cleanup Sync manifest rewrite: %w", cleanupErr))
+			}
+		}()
+		commitSyncManifest = commit
+	}
+
 	var commitGitIgnore func() error
 	if plan.GitIgnore != nil {
 		prepare := r.prepareGitIgnoreRewrite
 		if prepare == nil {
 			prepare = PrepareGitIgnoreRewrite
 		}
-		commit, cleanup, err := prepare(*plan.GitIgnore)
-		if err != nil {
-			return err
+		commit, cleanup, prepareErr := prepare(*plan.GitIgnore)
+		if prepareErr != nil {
+			return prepareErr
 		}
-		defer cleanup()
+		defer func() {
+			if cleanupErr := cleanup(); cleanupErr != nil {
+				err = errors.Join(err, fmt.Errorf("cleanup %s rewrite: %w", GitIgnorePath, cleanupErr))
+			}
+		}()
 		commitGitIgnore = commit
 	}
-```
 
-After Managed writes and before `commitSyncManifest`, add:
-
-```go
+	changes := SortedChanges(plan.Changes)
+	for _, change := range changes {
+		if change.Status == StatusRemove && change.DeletesTarget {
+			if err := removeManagedTargetFile(change.TargetPath); err != nil {
+				return err
+			}
+		}
+	}
+	for _, change := range changes {
+		if (change.Status == StatusAdd || change.Status == StatusUpdate) && change.WritesTarget {
+			if err := WriteFileBytes(change.TargetPath, change.SourceBytes); err != nil {
+				return err
+			}
+		}
+	}
 	if commitGitIgnore != nil {
 		if err := commitGitIgnore(); err != nil {
 			return err
 		}
 	}
+	if commitSyncManifest != nil {
+		if err := commitSyncManifest(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 ```
 
-Do not add rollback. The existing Managed deletion-before-write order remains unchanged and therefore supports Managed-to-Gitignore delete-then-create.
+Do not add rollback. The order remains capability gate, Sync preparation, Gitignore stale revalidation/preparation, Managed deletes, Managed writes, atomic Gitignore commit, and Sync commit last. This supports Managed-to-Gitignore delete-then-create while ensuring unsupported platforms fail before any preparation or mutation.
 
 - [ ] **Step 7: Format and run target/apply tests**
 
 Run:
 
 ```bash
-gofmt -w src/internal/driftline/gitignore_target.go src/internal/driftline/gitignore_target_test.go src/internal/driftline/target_repository.go src/internal/driftline/target_repository_test.go
+gofmt -w src/internal/driftline/gitignore_target.go src/internal/driftline/gitignore_rewrite_test.go src/internal/driftline/gitignore_commit*.go src/internal/driftline/gitignore_target_windows_test.go src/internal/driftline/gitignore_target_unsupported_test.go src/internal/driftline/target_repository.go src/internal/driftline/target_repository_test.go
 go test ./src/internal/driftline -run 'Test(PrepareGitIgnoreRewrite|TargetRepositoryApply)' -count=1
 go test ./src/internal/driftline -count=1
 ```
 
-Expected: all commands pass.
+Expected: all commands pass on the host. Compile the package tests for Windows and at least one unsupported target during final verification so every build-tag branch is checked.
 
 - [ ] **Step 8: Commit atomic apply support**
 
 ```bash
-git add src/internal/driftline/gitignore_target.go src/internal/driftline/gitignore_target_test.go src/internal/driftline/target_repository.go src/internal/driftline/target_repository_test.go
+git add src/internal/driftline/gitignore_target.go src/internal/driftline/gitignore_rewrite_test.go src/internal/driftline/gitignore_commit_unix.go src/internal/driftline/gitignore_commit_unix_test.go src/internal/driftline/gitignore_commit_windows.go src/internal/driftline/gitignore_commit_unsupported.go src/internal/driftline/gitignore_target_windows_test.go src/internal/driftline/gitignore_target_unsupported_test.go src/internal/driftline/target_repository.go src/internal/driftline/target_repository_test.go
 git commit -m "feat: apply gitignore section atomically"
 ```
 
@@ -1499,6 +1591,7 @@ git commit -m "feat: apply gitignore section atomically"
 
 - Modify: `src/internal/driftline/commands/check.go`
 - Modify: `src/internal/driftline/commands/diff.go`
+- Create: `src/internal/driftline/commands/diff_test.go`
 - Modify: `src/internal/driftline/commands/update.go`
 - Modify: `src/internal/driftline/commands/run.go`
 - Modify: `src/internal/driftline/commands/commands_test.go`
@@ -1681,22 +1774,26 @@ func TestUpdateGitIgnoreToManagedUsesExistingForceSemantics(t *testing.T) {
 }
 ```
 
+Add command tests for stable logical labels on existing, missing, and binary `.gitignore` diffs. Require `diff --git a/.gitignore b/.gitignore`, `--- a/.gitignore` or `--- /dev/null`, and `+++ b/.gitignore`; reject the Target Repository path, `os.TempDir()`, and `driftline-source-` or `driftline-diff-` temporary names. Also set Git color, external diff, and textconv configuration and prove the dedicated Gitignore diff remains uncolored and does not invoke those drivers.
+
+Create `diff_test.go` with `TestPrintGitIgnoreDiffUsesPlannedSnapshotsInsteadOfLiveTarget`: after planning, replace the live target with changed bytes, a missing path, and a symlink, and assert the output still compares the planned original and desired snapshots without exposing target or external bytes. Add `TestPrintGitIgnoreDiffPreservesHeaderLikeContent` so content lines beginning with `---` or `+++` inside a hunk are not relabeled.
+
 - [ ] **Step 3: Run command tests and verify RED**
 
 Run:
 
 ```bash
-go test ./src/internal/driftline/commands -run 'Test(GitIgnoreSectionCommandLifecycle|InitValidatesButDoesNotApplyGitIgnoreSection|UpdateRejectsMalformedGitIgnoreBeforeManagedWrites|UpdateRemovesUndeclaredGitIgnoreSectionAndKeepsFile|DiffReportsBinaryGitIgnoreChange|InitDoesNotInspectExistingGitIgnoreMarkers|UpdateManagedToGitIgnoreRecreatesGeneratedOnlyFile|UpdateGitIgnoreToManagedUsesExistingForceSemantics)$' -count=1
+go test ./src/internal/driftline/commands -run 'Test(GitIgnoreSectionCommandLifecycle|InitValidatesButDoesNotApplyGitIgnoreSection|UpdateRejectsMalformedGitIgnoreBeforeManagedWrites|UpdateRemovesUndeclaredGitIgnoreSectionAndKeepsFile|DiffReportsBinaryGitIgnoreChange|DiffMissingGitIgnoreUsesStableLogicalLabels|DiffDisablesGitColorConfiguration|DiffDisablesExternalAndTextconvDrivers|InitDoesNotInspectExistingGitIgnoreMarkers|UpdateManagedToGitIgnoreRecreatesGeneratedOnlyFile|UpdateGitIgnoreToManagedUsesExistingForceSemantics|PrintGitIgnoreDiffUsesPlannedSnapshotsInsteadOfLiveTarget|PrintGitIgnoreDiffPreservesHeaderLikeContent)$' -count=1
 ```
 
-Expected: compilation or assertions fail because command reporting only accepts Managed `Changes` and `diff` ignores `Plan.GitIgnore`.
+Expected: compilation or assertions fail because command reporting only accepts Managed `Changes`, `diff` ignores `Plan.GitIgnore`, and the dedicated snapshot renderer does not exist.
 
 - [ ] **Step 4: Print complete plans in check and update**
 
-Change `printChanges` to accept `driftline.Plan`:
+Change the reporting helper to `printPlan` and accept `driftline.Plan`:
 
 ```go
-func printChanges(w io.Writer, plan driftline.Plan) {
+func printPlan(w io.Writer, plan driftline.Plan) {
 	for _, change := range sortedChanges(plan.Changes) {
 		if change.Status == driftline.StatusSynced {
 			continue
@@ -1715,13 +1812,13 @@ func printChanges(w io.Writer, plan driftline.Plan) {
 Update `runCheck`:
 
 ```go
-	printChanges(stdout, plan)
+	printPlan(stdout, plan)
 	if plan.HasDrift() {
 		return errDrift
 	}
 ```
 
-Update both `runUpdate` print calls to pass `plan` rather than `plan.Changes`. After all command callers use `Plan.HasDrift`, remove the obsolete `HasDrift(changes []Change)` helper and inline its loop into `Plan.HasDrift`:
+Update both `runUpdate` reporting calls to pass `plan` rather than `plan.Changes`. After all command callers use `Plan.HasDrift`, remove the obsolete `HasDrift(changes []Change)` helper and inline its loop into `Plan.HasDrift`:
 
 ```go
 func (p Plan) HasDrift() bool {
@@ -1739,11 +1836,16 @@ func (p Plan) HasDrift() bool {
 
 - [ ] **Step 5: Render the dedicated full-file diff**
 
-After the existing Managed change loop in `runDiff`, add:
+After the existing Managed change loop in `runDiff`, pass both planned snapshots to a dedicated renderer. Never pass `TargetPath` to this renderer or reopen the live `.gitignore` after planning:
 
 ```go
 	if plan.GitIgnore != nil {
-		if err := printBytesDiff(stdout, plan.GitIgnore.DesiredBytes, plan.GitIgnore.TargetPath, plan.GitIgnore.TargetMissing); err != nil {
+		if err := printGitIgnoreDiff(
+			stdout,
+			plan.GitIgnore.OriginalBytes,
+			plan.GitIgnore.DesiredBytes,
+			plan.GitIgnore.TargetMissing,
+		); err != nil {
 			return err
 		}
 	}
@@ -1752,16 +1854,96 @@ After the existing Managed change loop in `runDiff`, add:
 	}
 ```
 
-Remove the old `HasDrift(plan.Changes)` check. The dedicated remove status still receives a content diff because the desired complete file bytes are available.
+Write the snapshots into a private temporary directory using fixed relative filenames and `0600` files. Run Git from that directory with color, external diff, and text conversion disabled. Use the platform null device as Git's missing left input, then normalize the public label to `/dev/null`:
+
+```go
+func printGitIgnoreDiff(w io.Writer, originalBytes, desiredBytes []byte, targetMissing bool) error {
+	tempDir, err := os.MkdirTemp("", "driftline-diff-*")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(tempDir)
+
+	originalPath := filepath.Join(tempDir, "original")
+	desiredPath := filepath.Join(tempDir, "desired")
+	if err := os.WriteFile(originalPath, originalBytes, 0o600); err != nil {
+		return err
+	}
+	if err := os.WriteFile(desiredPath, desiredBytes, 0o600); err != nil {
+		return err
+	}
+
+	left := "original"
+	if targetMissing {
+		left = os.DevNull
+	}
+	cmd := exec.Command("git", "diff", "--no-index", "--no-color", "--no-ext-diff", "--no-textconv", "--", left, "desired")
+	cmd.Dir = tempDir
+	data, diffErr := cmd.CombinedOutput()
+	data = relabelGitIgnoreDiff(data, targetMissing)
+	if len(data) > 0 {
+		if _, err := w.Write(data); err != nil {
+			return err
+		}
+	}
+	if diffErr == nil {
+		return nil
+	}
+	var exitErr *exec.ExitError
+	if errors.As(diffErr, &exitErr) && exitErr.ExitCode() == 1 {
+		return nil
+	}
+	return fmt.Errorf("run git diff: %w", diffErr)
+}
+
+func relabelGitIgnoreDiff(data []byte, targetMissing bool) []byte {
+	var output bytes.Buffer
+	inHunk := false
+	for _, line := range bytes.SplitAfter(data, []byte("\n")) {
+		if bytes.HasPrefix(line, []byte("@@ ")) {
+			inHunk = true
+		}
+		if inHunk {
+			output.Write(line)
+			continue
+		}
+		switch {
+		case bytes.HasPrefix(line, []byte("diff --git ")):
+			fmt.Fprintf(&output, "diff --git a/%s b/%s\n", driftline.GitIgnorePath, driftline.GitIgnorePath)
+		case bytes.HasPrefix(line, []byte("--- ")):
+			if targetMissing {
+				output.WriteString("--- /dev/null\n")
+			} else {
+				fmt.Fprintf(&output, "--- a/%s\n", driftline.GitIgnorePath)
+			}
+		case bytes.HasPrefix(line, []byte("+++ ")):
+			fmt.Fprintf(&output, "+++ b/%s\n", driftline.GitIgnorePath)
+		case bytes.HasPrefix(line, []byte("Binary files ")):
+			if targetMissing {
+				fmt.Fprintf(&output, "Binary files /dev/null and b/%s differ\n", driftline.GitIgnorePath)
+			} else {
+				fmt.Fprintf(&output, "Binary files a/%s and b/%s differ\n", driftline.GitIgnorePath, driftline.GitIgnorePath)
+			}
+		default:
+			output.Write(line)
+		}
+	}
+	return output.Bytes()
+}
+```
+
+Relabel only Git's pre-hunk metadata and binary summary. Once the first `@@` hunk header appears, copy every remaining byte unchanged so header-like target content is never rewritten. The public output must contain only stable `.gitignore` labels and `/dev/null` missing semantics, never random temporary names or local absolute paths.
+
+Remove the old `HasDrift(plan.Changes)` check. The dedicated remove status still receives a content diff because both complete planned byte snapshots are available.
 
 - [ ] **Step 6: Update command help language**
 
 In `printUsage`, use:
 
 ```text
-  check            check whether Target Repository state matches the Contract
-  diff             show content diffs for planned Target Repository changes
-  update           reconcile Managed files, the Gitignore section, and .driftline/sync.toml
+  check            check Target Repository state against the Contract
+  diff             show planned content changes
+  update           reconcile Managed files, Gitignore section, and Sync manifest
 ```
 
 Extend the existing help test with:
@@ -1779,7 +1961,7 @@ Keep the existing loop that rejects obsolete YAML, lock, path override, `if_not_
 Run:
 
 ```bash
-gofmt -w src/internal/driftline/plan.go src/internal/driftline/commands/check.go src/internal/driftline/commands/diff.go src/internal/driftline/commands/update.go src/internal/driftline/commands/run.go src/internal/driftline/commands/commands_test.go
+gofmt -w src/internal/driftline/plan.go src/internal/driftline/commands/check.go src/internal/driftline/commands/diff.go src/internal/driftline/commands/diff_test.go src/internal/driftline/commands/update.go src/internal/driftline/commands/run.go src/internal/driftline/commands/commands_test.go
 go test ./src/internal/driftline/commands -count=1
 go test ./... -count=1
 ```
@@ -1789,7 +1971,7 @@ Expected: all commands pass.
 - [ ] **Step 8: Commit command integration**
 
 ```bash
-git add src/internal/driftline/plan.go src/internal/driftline/commands/check.go src/internal/driftline/commands/diff.go src/internal/driftline/commands/update.go src/internal/driftline/commands/run.go src/internal/driftline/commands/commands_test.go
+git add src/internal/driftline/plan.go src/internal/driftline/commands/check.go src/internal/driftline/commands/diff.go src/internal/driftline/commands/diff_test.go src/internal/driftline/commands/update.go src/internal/driftline/commands/run.go src/internal/driftline/commands/commands_test.go
 git commit -m "feat: reconcile gitignore section in target commands"
 ```
 
@@ -1825,7 +2007,7 @@ Add a `## Gitignore Section` section containing the exact generated block:
 # end driftline
 ```
 
-Document these user-facing rules in prose: `init` validates but does not apply it; `check`, `diff`, and `update` reconcile it; outside bytes and duplicate outside entries are ignored; malformed or duplicate markers require manual repair; Template `.gitignore` may coexist; Managed `.gitignore` may not coexist while `[gitignore]` is present.
+Document these user-facing rules in prose: `init` validates but does not apply it; `check`, `diff`, and `update` reconcile it; outside bytes and duplicate outside entries are ignored; malformed or duplicate markers require manual repair; Template `.gitignore` may coexist; Managed `.gitignore` may not coexist while `[gitignore]` is present. State that packaged Linux and Darwin builds apply atomically, Windows retains safe no-follow parsing/check/diff but fails Gitignore updates before mutation, and other unsupported platforms may reject planning or apply according to safe-read and atomic-replacement support.
 
 - [ ] **Step 2: Add the domain term to CONTEXT.md**
 
@@ -1833,7 +2015,7 @@ Add after Template file:
 
 ```markdown
 **Gitignore section**:
-The marker-delimited region in the Target Repository's root `.gitignore` that driftline reconciles from Contract `[gitignore].entries` while preserving target-owned bytes outside the markers.
+The source-owned marker-delimited region in the Target Repository's root `.gitignore` that driftline reconciles from Contract `[gitignore].entries` while preserving target-owned bytes outside the markers.
 _Avoid_: Managed `.gitignore`, appended ignore list, generated `.gitignore` file.
 ```
 
@@ -1870,15 +2052,32 @@ Expected: Prettier completes and both checks report zero errors.
 Run:
 
 ```bash
-gofmt -w src/internal/driftline/*.go src/internal/driftline/commands/*.go
+set -e
+base=$(git merge-base HEAD main)
+test -z "$(git diff --name-only "$base" -- '*.go' | xargs gofmt -l)"
 go test ./... -count=1
+go test -race ./... -count=1
 go vet ./...
+
+build_dir=$(mktemp -d)
+trap 'rm -rf "$build_dir"' EXIT
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o "$build_dir/driftline-linux-amd64" ./src/cmd/driftline
+CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o "$build_dir/driftline-windows-amd64.exe" ./src/cmd/driftline
+for goos in linux windows plan9 freebsd; do
+  extension=""
+  if [ "$goos" = windows ]; then
+    extension=".exe"
+  fi
+  CGO_ENABLED=0 GOOS="$goos" GOARCH=amd64 go test -c -o "$build_dir/driftline-$goos-core.test$extension" ./src/internal/driftline
+  CGO_ENABLED=0 GOOS="$goos" GOARCH=amd64 go test -c -o "$build_dir/driftline-$goos-commands.test$extension" ./src/internal/driftline/commands
+done
+
 prettier --check README.md CONTEXT.md AGENTS.md docs/superpowers/plans/2026-07-19-contract-gitignore-section.md docs/superpowers/specs/2026-06-27-toml-managed-template-sync-design.md docs/superpowers/specs/2026-07-19-contract-gitignore-section-design.md
 markdownlint-cli2 README.md CONTEXT.md AGENTS.md docs/superpowers/plans/2026-07-19-contract-gitignore-section.md docs/superpowers/specs/2026-06-27-toml-managed-template-sync-design.md docs/superpowers/specs/2026-07-19-contract-gitignore-section-design.md
 git diff --check
 ```
 
-Expected: all Go tests pass, `go vet` exits zero, formatting is unchanged, markdownlint reports zero errors, and `git diff --check` prints nothing.
+Expected: changed Go files are already formatted; normal and race tests pass; `go vet` exits zero; Linux and Windows builds succeed; the core and command tests compile for Linux, Windows, Plan 9, and FreeBSD; temporary binaries are removed by the trap; formatting is unchanged; markdownlint reports zero errors; and `git diff --check` prints nothing.
 
 - [ ] **Step 6: Review the final diff against the design**
 

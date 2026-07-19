@@ -142,7 +142,7 @@ An absent `[gitignore]` table or `entries = []` removes the generated block but 
 
 `init` validates `[gitignore]` but does not inspect existing markers or apply the generated block. A Template file whose path is exactly `.gitignore` may coexist and seed a missing target during `init`; `check`, `diff`, and `update` later reconcile the generated region. A Managed file cannot resolve to root `.gitignore` while `[gitignore]` is present. The Sync manifest provides no target-side opt-out, target-path override, or entry override for this region.
 
-Packaged builds support Linux and Darwin, where Gitignore section updates use atomic replacement. On platforms without supported atomic replacement, an `update` that would rewrite the section fails before mutation; Contract parsing, `check`, and `diff` remain available.
+Packaged builds support Linux and Darwin, where Gitignore section updates use atomic replacement. Windows supports Contract parsing, `check`, and `diff` through safe no-follow reads, but a Gitignore section `update` fails before mutation because driftline has no documented atomic replacement primitive there. Other unsupported platforms may reject Gitignore planning or apply depending on safe-read and atomic-replacement support.
 
 ## Commands
 
