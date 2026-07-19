@@ -442,7 +442,7 @@ config = { path = ".mise/config.toml", mode = "template" }
 	if err != nil {
 		t.Fatalf("build plan should ignore template files: %v", err)
 	}
-	if HasDrift(plan.Changes) {
+	if plan.HasDrift() {
 		t.Fatalf("new templates are not applied during update: %#v", plan.Changes)
 	}
 }
@@ -1224,7 +1224,7 @@ config = { path = "tool.toml", mode = "managed" }
 	}
 }
 
-func TestPlanHasDriftDelegatesToManagedChanges(t *testing.T) {
+func TestPlanHasDriftIncludesManagedChanges(t *testing.T) {
 	if (Plan{Changes: []Change{{Status: StatusSynced}}}).HasDrift() {
 		t.Fatal("synced Managed changes should not report drift")
 	}

@@ -25,7 +25,12 @@ func runDiff(source driftline.SourceClient, opts TargetOptions, stdout io.Writer
 			printChange(stdout, change)
 		}
 	}
-	if driftline.HasDrift(plan.Changes) {
+	if plan.GitIgnore != nil {
+		if err := printBytesDiff(stdout, plan.GitIgnore.DesiredBytes, plan.GitIgnore.TargetPath, plan.GitIgnore.TargetMissing); err != nil {
+			return err
+		}
+	}
+	if plan.HasDrift() {
 		return errDrift
 	}
 	return nil

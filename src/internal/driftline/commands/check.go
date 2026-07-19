@@ -12,21 +12,24 @@ func runCheck(source driftline.SourceClient, opts TargetOptions, stdout io.Write
 	if err != nil {
 		return err
 	}
-	printChanges(stdout, plan.Changes)
-	if driftline.HasDrift(plan.Changes) {
+	printPlan(stdout, plan)
+	if plan.HasDrift() {
 		return errDrift
 	}
 	return nil
 }
 
-func printChanges(w io.Writer, changes []driftline.Change) {
-	for _, change := range sortedChanges(changes) {
+func printPlan(w io.Writer, plan driftline.Plan) {
+	for _, change := range sortedChanges(plan.Changes) {
 		if change.Status == driftline.StatusSynced {
 			continue
 		}
 		printChange(w, change)
 	}
-	if !driftline.HasDrift(changes) {
+	if plan.GitIgnore != nil {
+		fmt.Fprintf(w, "%s gitignore: %s\n", plan.GitIgnore.Status, plan.GitIgnore.Reason)
+	}
+	if !plan.HasDrift() {
 		fmt.Fprintln(w, "synced")
 	}
 }

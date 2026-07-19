@@ -39,7 +39,12 @@ func (p Plan) HasDrift() bool {
 	if p.GitIgnore != nil {
 		return true
 	}
-	return HasDrift(p.Changes)
+	for _, change := range p.Changes {
+		if change.Status != StatusSynced {
+			return true
+		}
+	}
+	return false
 }
 
 func BuildPlan(opts PlanOptions) (Plan, error) {
@@ -402,13 +407,4 @@ func validateForceKey(key string) error {
 
 func normalizedConfigPath(path string) string {
 	return filepath.ToSlash(filepath.Clean(path))
-}
-
-func HasDrift(changes []Change) bool {
-	for _, change := range changes {
-		if change.Status != StatusSynced {
-			return true
-		}
-	}
-	return false
 }

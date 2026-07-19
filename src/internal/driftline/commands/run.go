@@ -194,9 +194,9 @@ func printUsage(w io.Writer) {
 
 commands:
   init owner/repo  create .driftline/sync.toml from a GitHub Source Repository
-  check            check whether target files match the Source Repository
-  diff             show diffs for files that would be added or updated
-  update           sync managed files and refresh .driftline/sync.toml
+  check            check Target Repository state against the Contract
+  diff             show planned content changes
+  update           reconcile Managed files, Gitignore section, and Sync manifest
 
 examples:
   driftline init owner/repo
