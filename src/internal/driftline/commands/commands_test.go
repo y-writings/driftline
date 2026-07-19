@@ -3,9 +3,9 @@ package commands
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -591,7 +591,6 @@ ci = { path = ".github/workflows/ci.yaml", mode = "managed" }
 }
 
 func TestGitIgnoreSectionCommandLifecyclePreservesTargetOwnedDuplicate(t *testing.T) {
-	requireGitIgnoreUpdatePlatform(t)
 	targetDir := t.TempDir()
 	syncManifest := syncManifestTOML("")
 	writeFile(t, targetDir, driftline.SyncManifestPath, syncManifest)
@@ -630,9 +629,20 @@ entries = [".env", "/dist/"]
 			t.Fatalf("Gitignore diff missing %q:\n%s", want, stdout.String())
 		}
 	}
+	assertStableGitIgnoreDiffPaths(t, stdout.String(), targetDir, false)
 
 	stdout.Reset()
-	if err := runner.Run([]string{"update", "--target-dir", targetDir}, &stdout, &stderr); err != nil {
+	err = runner.Run([]string{"update", "--target-dir", targetDir}, &stdout, &stderr)
+	if isUnsupportedGitIgnoreCapability(err) {
+		if got := readFile(t, targetDir, ".gitignore"); got != outside {
+			t.Fatalf("unsupported update changed .gitignore: %q", got)
+		}
+		if got := readFile(t, targetDir, driftline.SyncManifestPath); got != syncManifest {
+			t.Fatalf("unsupported update rewrote Sync manifest:\n%s", got)
+		}
+		return
+	}
+	if err != nil {
 		t.Fatalf("update failed: %v", err)
 	}
 	if got, want := stdout.String(), "add gitignore: generated section is missing\n"; got != want {
@@ -656,7 +666,6 @@ entries = [".env", "/dist/"]
 }
 
 func TestUpdateRemovesGitIgnoreSectionAndPreservesOutsideBytes(t *testing.T) {
-	requireGitIgnoreUpdatePlatform(t)
 	targetDir := t.TempDir()
 	syncManifest := syncManifestTOML("")
 	writeFile(t, targetDir, driftline.SyncManifestPath, syncManifest)
@@ -667,7 +676,14 @@ func TestUpdateRemovesGitIgnoreSectionAndPreservesOutsideBytes(t *testing.T) {
 	client := newCommandSourceClient("main", "version = 2\n", nil)
 
 	var stdout, stderr bytes.Buffer
-	if err := (Runner{Source: client}).Run([]string{"update", "--target-dir", targetDir}, &stdout, &stderr); err != nil {
+	err := (Runner{Source: client}).Run([]string{"update", "--target-dir", targetDir}, &stdout, &stderr)
+	if isUnsupportedGitIgnoreCapability(err) {
+		if got, readErr := os.ReadFile(filepath.Join(targetDir, ".gitignore")); readErr != nil || !bytes.Equal(got, current) {
+			t.Fatalf("unsupported update changed .gitignore: got %q, err=%v", got, readErr)
+		}
+		return
+	}
+	if err != nil {
 		t.Fatalf("update failed: %v", err)
 	}
 	if got, want := stdout.String(), "remove gitignore: generated section is no longer declared\n"; got != want {
@@ -687,12 +703,12 @@ func TestUpdateRemovesGitIgnoreSectionAndPreservesOutsideBytes(t *testing.T) {
 }
 
 func TestUpdateReplacesEditedGitIgnoreSectionAndProvenanceInPlace(t *testing.T) {
-	requireGitIgnoreUpdatePlatform(t)
 	targetDir := t.TempDir()
 	writeFile(t, targetDir, driftline.SyncManifestPath, syncManifestTOML(""))
 	before := "# target before\n\n"
 	after := "# target after\n"
-	writeFile(t, targetDir, ".gitignore", before+commandGitIgnoreBlock("old/repo", "edited-entry")+after)
+	current := before + commandGitIgnoreBlock("old/repo", "edited-entry") + after
+	writeFile(t, targetDir, ".gitignore", current)
 	client := newCommandSourceClient("main", `version = 2
 
 [gitignore]
@@ -700,7 +716,14 @@ entries = [".env", "/dist/"]
 `, nil)
 
 	var stdout, stderr bytes.Buffer
-	if err := (Runner{Source: client}).Run([]string{"update", "--target-dir", targetDir}, &stdout, &stderr); err != nil {
+	err := (Runner{Source: client}).Run([]string{"update", "--target-dir", targetDir}, &stdout, &stderr)
+	if isUnsupportedGitIgnoreCapability(err) {
+		if got := readFile(t, targetDir, ".gitignore"); got != current {
+			t.Fatalf("unsupported update changed .gitignore: %q", got)
+		}
+		return
+	}
+	if err != nil {
 		t.Fatalf("update failed: %v", err)
 	}
 	if got, want := stdout.String(), "update gitignore: generated section differs\n"; got != want {
@@ -731,8 +754,107 @@ entries = [".env"]
 	if !strings.Contains(stdout.String(), "Binary files ") || !strings.Contains(stdout.String(), " differ\n") {
 		t.Fatalf("expected Git binary diff output, got:\n%s", stdout.String())
 	}
+	if !strings.Contains(stdout.String(), "Binary files a/.gitignore and b/.gitignore differ\n") {
+		t.Fatalf("binary diff should identify logical .gitignore, got:\n%s", stdout.String())
+	}
+	assertStableGitIgnoreDiffPaths(t, stdout.String(), targetDir, false)
 	if got, readErr := os.ReadFile(filepath.Join(targetDir, ".gitignore")); readErr != nil || !bytes.Equal(got, original) {
 		t.Fatalf("diff changed .gitignore: got %q err=%v", got, readErr)
+	}
+}
+
+func TestDiffMissingGitIgnoreUsesStableLogicalLabels(t *testing.T) {
+	targetDir := t.TempDir()
+	writeFile(t, targetDir, driftline.SyncManifestPath, syncManifestTOML(""))
+	client := newCommandSourceClient("main", `version = 2
+
+[gitignore]
+entries = [".env"]
+`, nil)
+
+	var stdout, stderr bytes.Buffer
+	err := (Runner{Source: client}).Run([]string{"diff", "--target-dir", targetDir}, &stdout, &stderr)
+	if err != errDrift {
+		t.Fatalf("missing Gitignore diff should return drift, got %v", err)
+	}
+	assertStableGitIgnoreDiffPaths(t, stdout.String(), targetDir, true)
+	if !strings.Contains(stdout.String(), "+.env\n") {
+		t.Fatalf("missing Gitignore diff omitted desired bytes:\n%s", stdout.String())
+	}
+}
+
+func TestDiffDisablesGitColorConfiguration(t *testing.T) {
+	targetDir := t.TempDir()
+	writeFile(t, targetDir, driftline.SyncManifestPath, syncManifestTOML(""))
+	writeFile(t, targetDir, ".gitignore", "old\n")
+	client := newCommandSourceClient("main", `version = 2
+
+[gitignore]
+entries = ["new"]
+`, nil)
+	setGitConfig(t, [][2]string{{"color.ui", "always"}})
+
+	var stdout, stderr bytes.Buffer
+	err := (Runner{Source: client}).Run([]string{"diff", "--target-dir", targetDir}, &stdout, &stderr)
+	if err != errDrift {
+		t.Fatalf("colored Gitignore diff should return drift, got %v", err)
+	}
+	if bytes.Contains(stdout.Bytes(), []byte("\x1b[")) {
+		t.Fatalf("Gitignore diff inherited ANSI color configuration: %q", stdout.String())
+	}
+}
+
+func TestDiffDisablesExternalAndTextconvDrivers(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		configure func(t *testing.T)
+		forbidden string
+	}{
+		{
+			name: "external diff",
+			configure: func(t *testing.T) {
+				script := writeExecutableTestFile(t, "external-diff.sh", "#!/bin/sh\nprintf 'EXTERNAL-DIFF-RAN\\n'\n")
+				t.Setenv("GIT_EXTERNAL_DIFF", script)
+			},
+			forbidden: "EXTERNAL-DIFF-RAN",
+		},
+		{
+			name: "textconv",
+			configure: func(t *testing.T) {
+				script := writeExecutableTestFile(t, "textconv.sh", "#!/bin/sh\nprintf 'TEXTCONV-RAN\\n'\n")
+				attributesDir := t.TempDir()
+				writeFile(t, attributesDir, "attributes", "* diff=driftline-test\n")
+				setGitConfig(t, [][2]string{
+					{"core.attributesFile", filepath.Join(attributesDir, "attributes")},
+					{"diff.driftline-test.textconv", script},
+				})
+			},
+			forbidden: "TEXTCONV-RAN",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			targetDir := t.TempDir()
+			writeFile(t, targetDir, driftline.SyncManifestPath, syncManifestTOML(""))
+			writeFile(t, targetDir, ".gitignore", "old\n")
+			client := newCommandSourceClient("main", `version = 2
+
+[gitignore]
+entries = ["new"]
+`, nil)
+			tt.configure(t)
+
+			var stdout, stderr bytes.Buffer
+			err := (Runner{Source: client}).Run([]string{"diff", "--target-dir", targetDir}, &stdout, &stderr)
+			if err != errDrift {
+				t.Fatalf("Gitignore diff should return drift, got %v", err)
+			}
+			if strings.Contains(stdout.String(), tt.forbidden) {
+				t.Fatalf("Gitignore diff invoked configured driver %q:\n%s", tt.forbidden, stdout.String())
+			}
+			if !strings.Contains(stdout.String(), " old\n") || !strings.Contains(stdout.String(), "+new\n") {
+				t.Fatalf("Gitignore diff omitted untransformed bytes:\n%s", stdout.String())
+			}
+		})
 	}
 }
 
@@ -791,12 +913,12 @@ config = { path = "tool.toml", mode = "managed" }
 }
 
 func TestUpdateTransitionsBetweenManagedAndGitIgnoreSectionOwnership(t *testing.T) {
-	requireGitIgnoreUpdatePlatform(t)
 	t.Run("Managed to Gitignore section", func(t *testing.T) {
 		targetDir := t.TempDir()
-		writeFile(t, targetDir, driftline.SyncManifestPath, syncManifestTOML(`[files.repository]
+		syncManifest := syncManifestTOML(`[files.repository]
 ignore = ".gitignore"
-`))
+`)
+		writeFile(t, targetDir, driftline.SyncManifestPath, syncManifest)
 		writeFile(t, targetDir, ".gitignore", "previous Managed bytes\n")
 		client := newCommandSourceClient("main", `version = 2
 
@@ -805,7 +927,17 @@ entries = [".env"]
 `, nil)
 
 		var stdout, stderr bytes.Buffer
-		if err := (Runner{Source: client}).Run([]string{"update", "--target-dir", targetDir}, &stdout, &stderr); err != nil {
+		err := (Runner{Source: client}).Run([]string{"update", "--target-dir", targetDir}, &stdout, &stderr)
+		if isUnsupportedGitIgnoreCapability(err) {
+			if got := readFile(t, targetDir, ".gitignore"); got != "previous Managed bytes\n" {
+				t.Fatalf("unsupported transition changed .gitignore: %q", got)
+			}
+			if got := readFile(t, targetDir, driftline.SyncManifestPath); got != syncManifest {
+				t.Fatalf("unsupported transition rewrote Sync manifest:\n%s", got)
+			}
+			return
+		}
+		if err != nil {
 			t.Fatalf("update failed: %v", err)
 		}
 		wantOutput := "remove repository.ignore: managed file removed from Contract\n" +
@@ -872,7 +1004,6 @@ Choose one:
 }
 
 func TestUpdateGitIgnoreSectionPreservesTemplateBytesOutsideSection(t *testing.T) {
-	requireGitIgnoreUpdatePlatform(t)
 	targetDir := t.TempDir()
 	syncManifest := syncManifestTOML("")
 	writeFile(t, targetDir, driftline.SyncManifestPath, syncManifest)
@@ -888,7 +1019,17 @@ ignore = { path = ".gitignore", mode = "template" }
 `, nil)
 
 	var stdout, stderr bytes.Buffer
-	if err := (Runner{Source: client}).Run([]string{"update", "--target-dir", targetDir}, &stdout, &stderr); err != nil {
+	err := (Runner{Source: client}).Run([]string{"update", "--target-dir", targetDir}, &stdout, &stderr)
+	if isUnsupportedGitIgnoreCapability(err) {
+		if got := readFile(t, targetDir, ".gitignore"); got != templateBytes {
+			t.Fatalf("unsupported update changed Template bytes: %q", got)
+		}
+		if got := readFile(t, targetDir, driftline.SyncManifestPath); got != syncManifest {
+			t.Fatalf("unsupported update rewrote Sync manifest:\n%s", got)
+		}
+		return
+	}
+	if err != nil {
 		t.Fatalf("update failed: %v", err)
 	}
 	if got, want := stdout.String(), "add gitignore: generated section is missing\n"; got != want {
@@ -941,6 +1082,40 @@ add gitignore: generated section is missing
 	}
 }
 
+func TestUpdateFailsClosedWhenGitIgnoreApplyIsUnsupported(t *testing.T) {
+	targetDir := t.TempDir()
+	syncManifest := syncManifestTOML("")
+	writeFile(t, targetDir, driftline.SyncManifestPath, syncManifest)
+	writeFile(t, targetDir, "tool.toml", "target-owned\n")
+	client := newCommandSourceClient("main", `version = 2
+
+[gitignore]
+entries = [".env"]
+
+[files.tool]
+config = { path = "tool.toml", mode = "managed" }
+`, map[string]string{"tool.toml": "source\n"})
+
+	var stdout, stderr bytes.Buffer
+	err := (Runner{Source: client}).Run([]string{"update", "--target-dir", targetDir, "--force", "tool.config"}, &stdout, &stderr)
+	if err == nil {
+		return
+	}
+	if !isUnsupportedGitIgnoreCapability(err) {
+		t.Fatalf("update failed for an unexpected reason: %v", err)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("unsupported update printed an unapplied plan: %q", stdout.String())
+	}
+	assertFileMissing(t, targetDir, ".gitignore")
+	if got := readFile(t, targetDir, "tool.toml"); got != "target-owned\n" {
+		t.Fatalf("unsupported update changed Managed target: %q", got)
+	}
+	if got := readFile(t, targetDir, driftline.SyncManifestPath); got != syncManifest {
+		t.Fatalf("unsupported update rewrote Sync manifest:\n%s", got)
+	}
+}
+
 func TestDiffPrintsManagedChangesBeforeGitIgnoreDiff(t *testing.T) {
 	targetDir := t.TempDir()
 	writeFile(t, targetDir, driftline.SyncManifestPath, syncManifestTOML(`[files.tool]
@@ -963,7 +1138,7 @@ config = { path = "tool.toml", mode = "managed" }
 		t.Fatalf("diff should return drift, got %v", err)
 	}
 	managedAt := strings.Index(stdout.String(), filepath.Join(targetDir, "tool.toml"))
-	gitIgnoreAt := strings.Index(stdout.String(), filepath.Join(targetDir, ".gitignore"))
+	gitIgnoreAt := strings.Index(stdout.String(), "diff --git a/.gitignore b/.gitignore")
 	if managedAt < 0 || gitIgnoreAt < 0 || managedAt >= gitIgnoreAt {
 		t.Fatalf("Managed diff should precede Gitignore diff:\n%s", stdout.String())
 	}
@@ -1454,14 +1629,51 @@ func commandGitIgnoreBlock(repository string, entries ...string) string {
 		"# end driftline\n"
 }
 
-func requireGitIgnoreUpdatePlatform(t *testing.T) {
+func assertStableGitIgnoreDiffPaths(t *testing.T, output, targetDir string, targetMissing bool) {
 	t.Helper()
-	switch runtime.GOOS {
-	case "aix", "android", "darwin", "dragonfly", "freebsd", "illumos", "ios", "linux", "netbsd", "openbsd", "solaris":
-		return
-	default:
-		t.Skip("atomic .gitignore replacement is unsupported on this platform")
+	if want := "diff --git a/.gitignore b/.gitignore\n"; !strings.Contains(output, want) {
+		t.Fatalf("Gitignore diff missing stable label %q:\n%s", want, output)
 	}
+	if strings.Contains(output, "--- ") {
+		wantLeft := "--- a/.gitignore\n"
+		if targetMissing {
+			wantLeft = "--- /dev/null\n"
+		}
+		for _, want := range []string{wantLeft, "+++ b/.gitignore\n"} {
+			if !strings.Contains(output, want) {
+				t.Fatalf("Gitignore diff missing stable label %q:\n%s", want, output)
+			}
+		}
+	}
+	for _, forbidden := range []string{targetDir, os.TempDir(), "driftline-source-", "driftline-diff-"} {
+		if strings.Contains(output, forbidden) {
+			t.Fatalf("Gitignore diff exposes physical path %q:\n%s", forbidden, output)
+		}
+	}
+}
+
+func setGitConfig(t *testing.T, entries [][2]string) {
+	t.Helper()
+	t.Setenv("GIT_CONFIG_COUNT", fmt.Sprint(len(entries)))
+	for index, entry := range entries {
+		t.Setenv(fmt.Sprintf("GIT_CONFIG_KEY_%d", index), entry[0])
+		t.Setenv(fmt.Sprintf("GIT_CONFIG_VALUE_%d", index), entry[1])
+	}
+}
+
+func writeExecutableTestFile(t *testing.T, name, content string) string {
+	t.Helper()
+	root := t.TempDir()
+	writeFile(t, root, name, content)
+	path := filepath.Join(root, name)
+	if err := os.Chmod(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func isUnsupportedGitIgnoreCapability(err error) bool {
+	return err != nil && strings.Contains(err.Error(), ".gitignore") && strings.Contains(err.Error(), "unsupported")
 }
 
 func writeFile(t *testing.T, root, path, content string) {
