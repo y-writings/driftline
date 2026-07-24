@@ -43,7 +43,7 @@ func TestPrepareGitIgnoreRewriteRenameFailureLeavesTempForCleanup(t *testing.T) 
 	if err := os.WriteFile(targetPath, original, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	commit, cleanup, err := PrepareGitIgnoreRewrite(GitIgnoreSectionChange{
+	commit, cleanup, err := prepareGitIgnoreRewrite(GitIgnoreSectionChange{
 		TargetPath:    targetPath,
 		OriginalBytes: original,
 		DesiredBytes:  []byte("desired\n"),

@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-func HashBytes(data []byte) string {
+func hashBytes(data []byte) string {
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])
 }
@@ -23,14 +23,10 @@ func fileHash(path string) (string, bool, error) {
 	if err != nil {
 		return "", false, err
 	}
-	return HashBytes(data), true, nil
+	return hashBytes(data), true, nil
 }
 
-func FileHash(path string) (string, bool, error) {
-	return fileHash(path)
-}
-
-func WriteFileBytes(target string, data []byte) error {
+func writeFileBytes(target string, data []byte) error {
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		return err
 	}
@@ -62,8 +58,4 @@ func pathWithin(root, name, label string) (string, error) {
 		return "", fmt.Errorf("%s path escapes root: %s", label, name)
 	}
 	return fullPath, nil
-}
-
-func PathWithin(root, name, label string) (string, error) {
-	return pathWithin(root, name, label)
 }

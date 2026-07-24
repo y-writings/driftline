@@ -18,7 +18,7 @@ type gitIgnoreTempOperations struct {
 }
 
 func planGitIgnoreSectionChange(targetDir string, repository string, config *ContractGitIgnore, replaceAfterManagedDelete bool) (*GitIgnoreSectionChange, error) {
-	targetPath, err := PathWithin(targetDir, GitIgnorePath, GitIgnorePath+" target")
+	targetPath, err := pathWithin(targetDir, GitIgnorePath, GitIgnorePath+" target")
 	if err != nil {
 		return nil, err
 	}
@@ -72,7 +72,7 @@ func planGitIgnoreSectionChange(targetDir string, repository string, config *Con
 	}, nil
 }
 
-func PrepareGitIgnoreRewrite(change GitIgnoreSectionChange) (commit, cleanup func() error, err error) {
+func prepareGitIgnoreRewrite(change GitIgnoreSectionChange) (commit, cleanup func() error, err error) {
 	return prepareGitIgnoreRewriteWithOperations(change, gitIgnoreTempOperations{})
 }
 
@@ -179,17 +179,4 @@ func staleGitIgnorePlanError(reason string, cause error) error {
 		return fmt.Errorf("stale %s plan: %s: %w", GitIgnorePath, reason, cause)
 	}
 	return fmt.Errorf("stale %s plan: %s", GitIgnorePath, reason)
-}
-
-func validateManagedGitIgnoreTarget(config *ContractGitIgnore, file resolvedManagedFile) error {
-	if config == nil {
-		return nil
-	}
-	if file.target == GitIgnorePath {
-		return fmt.Errorf("Contract file %q cannot manage %s while gitignore is configured", file.Key, GitIgnorePath)
-	}
-	if len(config.Entries) > 0 && isPathAncestor(GitIgnorePath, file.target) {
-		return fmt.Errorf("Contract file %q target %q cannot be below %s while gitignore entries are configured", file.Key, file.target, GitIgnorePath)
-	}
-	return nil
 }

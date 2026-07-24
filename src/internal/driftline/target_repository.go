@@ -36,7 +36,7 @@ func (r TargetRepository) Apply(plan Plan) (err error) {
 	if planHasSyncManifestChanges(plan.Changes) {
 		prepare := r.prepareSyncManifestRewrite
 		if prepare == nil {
-			prepare = PrepareSyncManifestRewrite
+			prepare = prepareSyncManifestRewrite
 		}
 		commit, cleanup, prepareErr := prepare(root, plan.NextSyncManifest)
 		if prepareErr != nil {
@@ -54,7 +54,7 @@ func (r TargetRepository) Apply(plan Plan) (err error) {
 	if plan.GitIgnore != nil {
 		prepare := r.prepareGitIgnoreRewrite
 		if prepare == nil {
-			prepare = PrepareGitIgnoreRewrite
+			prepare = prepareGitIgnoreRewrite
 		}
 		commit, cleanup, prepareErr := prepare(*plan.GitIgnore)
 		if prepareErr != nil {
@@ -78,7 +78,7 @@ func (r TargetRepository) Apply(plan Plan) (err error) {
 	}
 	for _, change := range changes {
 		if (change.Status == StatusAdd || change.Status == StatusUpdate) && change.WritesTarget {
-			if err := WriteFileBytes(change.TargetPath, change.SourceBytes); err != nil {
+			if err := writeFileBytes(change.TargetPath, change.SourceBytes); err != nil {
 				return err
 			}
 		}

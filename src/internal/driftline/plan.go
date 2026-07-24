@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"syscall"
 )
@@ -203,7 +202,7 @@ func (b planBuilder) build() (Plan, error) {
 			plan.Changes = append(plan.Changes, syncManifestRemoveChange(target))
 			continue
 		}
-		fullPath, err := PathWithin(b.opts.TargetDir, target.Path, fmt.Sprintf("target %q", target.Key))
+		fullPath, err := pathWithin(b.opts.TargetDir, target.Path, fmt.Sprintf("target %q", target.Key))
 		if err != nil {
 			return Plan{}, err
 		}
@@ -240,7 +239,7 @@ func (b planBuilder) build() (Plan, error) {
 }
 
 func (b planBuilder) addManagedChange(plan *Plan, file resolvedManagedFile, staleDeleteTargets map[string]struct{}) error {
-	targetPath, err := PathWithin(b.opts.TargetDir, file.target, fmt.Sprintf("target %q", file.Key))
+	targetPath, err := pathWithin(b.opts.TargetDir, file.target, fmt.Sprintf("target %q", file.Key))
 	if err != nil {
 		return err
 	}
@@ -274,7 +273,7 @@ func (b planBuilder) addManagedChange(plan *Plan, file resolvedManagedFile, stal
 		}
 	}
 	if targetExists {
-		currentHash, _, err = FileHash(targetPath)
+		currentHash, _, err = fileHash(targetPath)
 		if err != nil {
 			return fmt.Errorf("hash target %s: %w", file.target, err)
 		}
@@ -298,7 +297,7 @@ func (b planBuilder) addManagedChange(plan *Plan, file resolvedManagedFile, stal
 	if err != nil {
 		return fmt.Errorf("source file not found in source repository: %w", err)
 	}
-	sourceHash := HashBytes(sourceBytes)
+	sourceHash := hashBytes(sourceBytes)
 	change := Change{
 		ID:          file.Key,
 		Target:      file.target,
@@ -336,7 +335,7 @@ func (b planBuilder) targetBlockedByStaleFileAncestor(target string, staleDelete
 		if !isPathAncestor(staleTarget, target) {
 			continue
 		}
-		fullPath, err := PathWithin(b.opts.TargetDir, staleTarget, fmt.Sprintf("stale target %q", staleTarget))
+		fullPath, err := pathWithin(b.opts.TargetDir, staleTarget, fmt.Sprintf("stale target %q", staleTarget))
 		if err != nil {
 			return false, err
 		}
@@ -357,11 +356,6 @@ func (b planBuilder) targetBlockedByStaleFileAncestor(target string, staleDelete
 	return false, nil
 }
 
-func isPathAncestor(parent string, child string) bool {
-	parent = normalizedConfigPath(parent)
-	child = normalizedConfigPath(child)
-	return parent != child && strings.HasPrefix(child, parent+"/")
-}
 
 func overlappingManagedTarget(target string, usedTargets map[string]string) (string, bool) {
 	for _, usedTarget := range sortedStringKeys(usedTargets) {
@@ -403,8 +397,4 @@ func validateForceKey(key string) error {
 		return err
 	}
 	return nil
-}
-
-func normalizedConfigPath(path string) string {
-	return filepath.ToSlash(filepath.Clean(path))
 }

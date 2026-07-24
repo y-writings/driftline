@@ -307,13 +307,13 @@ func ValidateConfigPath(path string, label string) error {
 	return nil
 }
 
-func IsReservedMetadataPath(name string) bool {
+func isReservedMetadataPath(name string) bool {
 	name = normalizedConfigPath(name)
 	return name == MetadataDirectoryPath || strings.HasPrefix(name, MetadataDirectoryPath+"/")
 }
 
 func validateUnreservedMetadataPath(name string, label string) error {
-	if IsReservedMetadataPath(name) {
+	if isReservedMetadataPath(name) {
 		return fmt.Errorf("reserved driftline metadata path: %s: %s", name, label)
 	}
 	return nil

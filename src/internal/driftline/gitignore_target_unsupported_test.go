@@ -63,7 +63,7 @@ func TestPrepareGitIgnoreRewriteReportsUnsupportedAtomicReplacement(t *testing.T
 		t.Fatalf("expected platform atomic replacement rejection, got %v", err)
 	}
 
-	_, _, err := PrepareGitIgnoreRewrite(GitIgnoreSectionChange{
+	_, _, err := prepareGitIgnoreRewrite(GitIgnoreSectionChange{
 		TargetPath:    filepath.Join(t.TempDir(), GitIgnorePath),
 		TargetMissing: true,
 		DesiredBytes:  []byte("desired\n"),
