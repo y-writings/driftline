@@ -30,7 +30,7 @@ func TestPrepareGitIgnoreRewriteRejectsRegularTargetReplacedByFIFO(t *testing.T)
 		t.Fatal(err)
 	}
 
-	commit, cleanup, err := PrepareGitIgnoreRewrite(GitIgnoreSectionChange{
+	commit, cleanup, err := prepareGitIgnoreRewrite(GitIgnoreSectionChange{
 		TargetPath:    targetPath,
 		OriginalBytes: []byte("original\n"),
 		DesiredBytes:  []byte("generated\n"),

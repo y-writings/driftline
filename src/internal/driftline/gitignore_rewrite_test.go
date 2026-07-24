@@ -34,7 +34,7 @@ func TestPrepareGitIgnoreRewriteRejectsAppearedMissingTarget(t *testing.T) {
 				}
 			}
 
-			commit, cleanup, err := PrepareGitIgnoreRewrite(GitIgnoreSectionChange{
+			commit, cleanup, err := prepareGitIgnoreRewrite(GitIgnoreSectionChange{
 				TargetPath:    targetPath,
 				TargetMissing: true,
 				DesiredBytes:  []byte("generated\n"),
@@ -87,7 +87,7 @@ func TestPrepareGitIgnoreRewriteRejectsChangedRegularTarget(t *testing.T) {
 				}
 			}
 
-			commit, cleanup, err := PrepareGitIgnoreRewrite(GitIgnoreSectionChange{
+			commit, cleanup, err := prepareGitIgnoreRewrite(GitIgnoreSectionChange{
 				TargetPath:    targetPath,
 				OriginalBytes: []byte(original),
 				DesiredBytes:  []byte("generated\n"),
@@ -119,7 +119,7 @@ func TestPrepareGitIgnoreRewritePreservesRevalidationErrorCause(t *testing.T) {
 		t.Skip("filesystem permits reading a mode 000 file")
 	}
 
-	_, _, err := PrepareGitIgnoreRewrite(GitIgnoreSectionChange{
+	_, _, err := prepareGitIgnoreRewrite(GitIgnoreSectionChange{
 		TargetPath:    targetPath,
 		OriginalBytes: []byte("original\n"),
 		DesiredBytes:  []byte("generated\n"),
@@ -218,7 +218,7 @@ func TestPrepareGitIgnoreRewriteDefersAtomicReplacement(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	commit, cleanup, err := PrepareGitIgnoreRewrite(GitIgnoreSectionChange{
+	commit, cleanup, err := prepareGitIgnoreRewrite(GitIgnoreSectionChange{
 		TargetPath:    targetPath,
 		OriginalBytes: original,
 		DesiredBytes:  desired,
@@ -267,7 +267,7 @@ func TestPrepareGitIgnoreRewriteCleanupRemovesUncommittedTemp(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, cleanup, err := PrepareGitIgnoreRewrite(GitIgnoreSectionChange{
+	_, cleanup, err := prepareGitIgnoreRewrite(GitIgnoreSectionChange{
 		TargetPath:    targetPath,
 		OriginalBytes: original,
 		DesiredBytes:  []byte("generated\n"),
@@ -306,7 +306,7 @@ func TestPrepareGitIgnoreRewritePreservesExistingMode(t *testing.T) {
 	}
 	wantMode := before.Mode().Perm()
 
-	commit, cleanup, err := PrepareGitIgnoreRewrite(GitIgnoreSectionChange{
+	commit, cleanup, err := prepareGitIgnoreRewrite(GitIgnoreSectionChange{
 		TargetPath:    targetPath,
 		OriginalBytes: original,
 		DesiredBytes:  []byte("generated\n"),
@@ -340,7 +340,7 @@ func TestPrepareGitIgnoreRewriteNewModeMatchesUmaskApplied0644(t *testing.T) {
 
 	root := t.TempDir()
 	targetPath := filepath.Join(root, GitIgnorePath)
-	commit, cleanup, err := PrepareGitIgnoreRewrite(GitIgnoreSectionChange{
+	commit, cleanup, err := prepareGitIgnoreRewrite(GitIgnoreSectionChange{
 		TargetPath:    targetPath,
 		TargetMissing: true,
 		DesiredBytes:  []byte("generated\n"),
@@ -364,7 +364,7 @@ func TestPrepareGitIgnoreRewriteCommitsEmptyFileInsteadOfDeleting(t *testing.T) 
 		t.Fatal(err)
 	}
 
-	commit, cleanup, err := PrepareGitIgnoreRewrite(GitIgnoreSectionChange{
+	commit, cleanup, err := prepareGitIgnoreRewrite(GitIgnoreSectionChange{
 		TargetPath:    targetPath,
 		OriginalBytes: original,
 		DesiredBytes:  []byte{},

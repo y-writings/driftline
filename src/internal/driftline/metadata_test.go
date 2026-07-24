@@ -25,7 +25,7 @@ func TestPrepareSyncManifestCreateDefersManifestUntilCommit(t *testing.T) {
 	root := t.TempDir()
 	want := metadataTestManifest("y-writings/source-repo")
 
-	commit, cleanup, err := PrepareSyncManifestCreate(root, want)
+	commit, cleanup, err := prepareSyncManifestCreate(root, want)
 	if err != nil {
 		t.Fatalf("prepare Sync manifest create failed: %v", err)
 	}
@@ -106,7 +106,7 @@ func TestSyncMetadataCreationRejectsUnsafeMetadataDirectory(t *testing.T) {
 
 			err := ValidateSyncManifestCreation(root)
 			metadataTestRequireError(t, err, "driftline metadata path is not a real directory: .driftline")
-			_, _, err = PrepareSyncManifestCreate(root, metadataTestManifest("y-writings/source-repo"))
+			_, _, err = prepareSyncManifestCreate(root, metadataTestManifest("y-writings/source-repo"))
 			metadataTestRequireError(t, err, "driftline metadata path is not a real directory: .driftline")
 		})
 	}
@@ -120,7 +120,7 @@ func TestSyncMetadataCreationRejectsUnsafeSyncManifest(t *testing.T) {
 
 			wantErr := "Sync manifest path is not a regular file: .driftline/sync.toml"
 			metadataTestRequireError(t, ValidateSyncManifestCreation(root), wantErr)
-			_, _, err := PrepareSyncManifestCreate(root, metadataTestManifest("y-writings/source-repo"))
+			_, _, err := prepareSyncManifestCreate(root, metadataTestManifest("y-writings/source-repo"))
 			metadataTestRequireError(t, err, wantErr)
 		})
 	}
@@ -207,7 +207,7 @@ func TestLoadSyncManifestRejectsUnsafePathsWithoutFollowing(t *testing.T) {
 func TestPrepareSyncManifestRewriteRequiresExistingRegularManifest(t *testing.T) {
 	t.Run("missing metadata directory", func(t *testing.T) {
 		root := t.TempDir()
-		commit, cleanup, err := PrepareSyncManifestRewrite(root, metadataTestManifest("y-writings/source-repo"))
+		commit, cleanup, err := prepareSyncManifestRewrite(root, metadataTestManifest("y-writings/source-repo"))
 		if commit != nil || cleanup != nil {
 			t.Fatal("failed preparation should not return closures")
 		}
@@ -218,7 +218,7 @@ func TestPrepareSyncManifestRewriteRequiresExistingRegularManifest(t *testing.T)
 	t.Run("missing manifest", func(t *testing.T) {
 		root := t.TempDir()
 		metadataTestMkdir(t, filepath.Join(root, MetadataDirectoryPath), 0o755)
-		commit, cleanup, err := PrepareSyncManifestRewrite(root, metadataTestManifest("y-writings/source-repo"))
+		commit, cleanup, err := prepareSyncManifestRewrite(root, metadataTestManifest("y-writings/source-repo"))
 		if commit != nil || cleanup != nil {
 			t.Fatal("failed preparation should not return closures")
 		}
@@ -232,7 +232,7 @@ func TestPrepareSyncManifestRewriteRejectsUnsafeMetadataDirectory(t *testing.T) 
 		t.Run(state, func(t *testing.T) {
 			root := t.TempDir()
 			metadataTestSetUnsafeMetadata(t, root, state)
-			_, _, err := PrepareSyncManifestRewrite(root, metadataTestManifest("y-writings/source-repo"))
+			_, _, err := prepareSyncManifestRewrite(root, metadataTestManifest("y-writings/source-repo"))
 			metadataTestRequireError(t, err, "driftline metadata path is not a real directory: .driftline")
 		})
 	}
@@ -255,7 +255,7 @@ func TestLoadSyncManifestReadErrorIncludesCanonicalPath(t *testing.T) {
 
 func TestPrepareSyncManifestCreateErrorIncludesCanonicalMetadataPath(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "missing-parent", "root")
-	_, _, err := PrepareSyncManifestCreate(root, metadataTestManifest("y-writings/source-repo"))
+	_, _, err := prepareSyncManifestCreate(root, metadataTestManifest("y-writings/source-repo"))
 	if err == nil || !strings.HasPrefix(err.Error(), "create driftline metadata directory .driftline: ") {
 		t.Fatalf("expected canonical metadata creation context, got %v", err)
 	}
@@ -276,7 +276,7 @@ func TestPrepareSyncManifestRewriteRejectsUnsafeSyncManifest(t *testing.T) {
 		t.Run(state, func(t *testing.T) {
 			root := t.TempDir()
 			metadataTestSetUnsafeSyncManifest(t, root, state)
-			_, _, err := PrepareSyncManifestRewrite(root, metadataTestManifest("y-writings/source-repo"))
+			_, _, err := prepareSyncManifestRewrite(root, metadataTestManifest("y-writings/source-repo"))
 			metadataTestRequireError(t, err, "Sync manifest path is not a regular file: .driftline/sync.toml")
 		})
 	}
@@ -289,7 +289,7 @@ func TestPrepareSyncManifestRewritePreservesModeAndDefersReplacement(t *testing.
 	metadataTestWriteManifest(t, root, oldManifest, 0o640)
 	original := FormatSyncManifest(oldManifest)
 
-	commit, cleanup, err := PrepareSyncManifestRewrite(root, newManifest)
+	commit, cleanup, err := prepareSyncManifestRewrite(root, newManifest)
 	if err != nil {
 		t.Fatalf("prepare Sync manifest rewrite failed: %v", err)
 	}
@@ -336,7 +336,7 @@ func TestPrepareSyncManifestRewritePreservesModeAndDefersReplacement(t *testing.
 
 func TestPrepareSyncManifestCleanupRemovesTemp(t *testing.T) {
 	root := t.TempDir()
-	_, cleanup, err := PrepareSyncManifestCreate(root, metadataTestManifest("y-writings/source-repo"))
+	_, cleanup, err := prepareSyncManifestCreate(root, metadataTestManifest("y-writings/source-repo"))
 	if err != nil {
 		t.Fatalf("prepare Sync manifest create failed: %v", err)
 	}
@@ -363,7 +363,7 @@ func TestPrepareSyncManifestCreateCommitRechecksDestination(t *testing.T) {
 	for _, state := range []string{"regular file", "directory"} {
 		t.Run(state, func(t *testing.T) {
 			root := t.TempDir()
-			commit, cleanup, err := PrepareSyncManifestCreate(root, metadataTestManifest("y-writings/source-repo"))
+			commit, cleanup, err := prepareSyncManifestCreate(root, metadataTestManifest("y-writings/source-repo"))
 			if err != nil {
 				t.Fatalf("prepare Sync manifest create failed: %v", err)
 			}
@@ -397,7 +397,7 @@ func TestPrepareSyncManifestRewriteCommitRechecksDestination(t *testing.T) {
 	t.Run("removed", func(t *testing.T) {
 		root := t.TempDir()
 		metadataTestWriteManifest(t, root, metadataTestManifest("y-writings/old-source"), 0o644)
-		commit, cleanup, err := PrepareSyncManifestRewrite(root, metadataTestManifest("y-writings/new-source"))
+		commit, cleanup, err := prepareSyncManifestRewrite(root, metadataTestManifest("y-writings/new-source"))
 		if err != nil {
 			t.Fatalf("prepare Sync manifest rewrite failed: %v", err)
 		}
@@ -413,7 +413,7 @@ func TestPrepareSyncManifestRewriteCommitRechecksDestination(t *testing.T) {
 	t.Run("replaced by symlink", func(t *testing.T) {
 		root := t.TempDir()
 		metadataTestWriteManifest(t, root, metadataTestManifest("y-writings/old-source"), 0o644)
-		commit, cleanup, err := PrepareSyncManifestRewrite(root, metadataTestManifest("y-writings/new-source"))
+		commit, cleanup, err := prepareSyncManifestRewrite(root, metadataTestManifest("y-writings/new-source"))
 		if err != nil {
 			t.Fatalf("prepare Sync manifest rewrite failed: %v", err)
 		}
@@ -443,10 +443,10 @@ func TestPrepareSyncManifestValidatesModelBeforeFilesystemChanges(t *testing.T) 
 		run  func(string) (func() error, func() error, error)
 	}{
 		{name: "create", run: func(root string) (func() error, func() error, error) {
-			return PrepareSyncManifestCreate(root, invalid)
+			return prepareSyncManifestCreate(root, invalid)
 		}},
 		{name: "rewrite", run: func(root string) (func() error, func() error, error) {
-			return PrepareSyncManifestRewrite(root, invalid)
+			return prepareSyncManifestRewrite(root, invalid)
 		}},
 	} {
 		t.Run(prepare.name, func(t *testing.T) {
@@ -482,7 +482,7 @@ func TestSyncMetadataDefaultsEmptyRootToWorkingDirectory(t *testing.T) {
 		t.Fatalf("validate empty root failed: %v", err)
 	}
 	manifest := metadataTestManifest("y-writings/source-repo")
-	commit, cleanup, err := PrepareSyncManifestCreate("", manifest)
+	commit, cleanup, err := prepareSyncManifestCreate("", manifest)
 	if err != nil {
 		t.Fatalf("prepare with empty root failed: %v", err)
 	}
@@ -496,7 +496,7 @@ func TestSyncMetadataDefaultsEmptyRootToWorkingDirectory(t *testing.T) {
 		t.Fatalf("load with empty root failed: %v", err)
 	}
 
-	rewriteCommit, rewriteCleanup, err := PrepareSyncManifestRewrite("", metadataTestManifest("y-writings/new-source"))
+	rewriteCommit, rewriteCleanup, err := prepareSyncManifestRewrite("", metadataTestManifest("y-writings/new-source"))
 	if err != nil {
 		t.Fatalf("prepare rewrite with empty root failed: %v", err)
 	}

@@ -59,7 +59,7 @@ func (a initialAdoption) adopt() error {
 
 	prepareSyncManifestCreate := a.prepareSyncManifestCreate
 	if prepareSyncManifestCreate == nil {
-		prepareSyncManifestCreate = PrepareSyncManifestCreate
+		prepareSyncManifestCreate = prepareSyncManifestCreate
 	}
 	commitSyncManifest, cleanupSyncManifest, err := prepareSyncManifestCreate(root, opts.SyncManifest)
 	if err != nil {
@@ -69,7 +69,7 @@ func (a initialAdoption) adopt() error {
 
 	writeFileBytes := a.writeFileBytes
 	if writeFileBytes == nil {
-		writeFileBytes = WriteFileBytes
+		writeFileBytes = writeFileBytes
 	}
 	for _, template := range templates {
 		if err := writeFileBytes(template.targetPath, template.sourceBytes); err != nil {
@@ -88,7 +88,7 @@ func (a initialAdoption) collectTemplates(root string) ([]initialAdoptionTemplat
 	missingTemplates := []missingTemplate{}
 	templates := []initialAdoptionTemplate{}
 	for _, entry := range ContractEntries(a.opts.Contract) {
-		targetPath, err := PathWithin(root, entry.Path, fmt.Sprintf("target %q", entry.Key))
+		targetPath, err := pathWithin(root, entry.Path, fmt.Sprintf("target %q", entry.Key))
 		if err != nil {
 			return nil, err
 		}

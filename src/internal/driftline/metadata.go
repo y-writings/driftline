@@ -31,7 +31,7 @@ func LoadSyncManifest(root string) (SyncManifest, error) {
 	return LoadSyncManifestBytes(data)
 }
 
-func PrepareSyncManifestCreate(root string, manifest SyncManifest) (commit func() error, cleanup func() error, err error) {
+func prepareSyncManifestCreate(root string, manifest SyncManifest) (commit func() error, cleanup func() error, err error) {
 	if err := validateSyncManifest(manifest); err != nil {
 		return nil, nil, err
 	}
@@ -54,7 +54,7 @@ func PrepareSyncManifestCreate(root string, manifest SyncManifest) (commit func(
 	})
 }
 
-func PrepareSyncManifestRewrite(root string, manifest SyncManifest) (commit func() error, cleanup func() error, err error) {
+func prepareSyncManifestRewrite(root string, manifest SyncManifest) (commit func() error, cleanup func() error, err error) {
 	if err := validateSyncManifest(manifest); err != nil {
 		return nil, nil, err
 	}

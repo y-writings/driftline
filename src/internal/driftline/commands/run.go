@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/y-writings/driftline/src/internal/driftline"
+	"github.com/y-writings/driftline/src/internal/driftline/github"
 )
 
 var errDrift = errors.New("drift detected")
@@ -16,12 +17,12 @@ type Runner struct {
 }
 
 func Run(args []string, stdout, stderr io.Writer) error {
-	return Runner{Source: driftline.NewGitHubClientFromEnv()}.Run(args, stdout, stderr)
+	return Runner{Source: github.NewClientFromEnv()}.Run(args, stdout, stderr)
 }
 
 func (r Runner) Run(args []string, stdout, stderr io.Writer) error {
 	if r.Source == nil {
-		r.Source = driftline.NewGitHubClientFromEnv()
+		r.Source = github.NewClientFromEnv()
 	}
 	if len(args) > 0 && args[0] == "--" {
 		args = args[1:]

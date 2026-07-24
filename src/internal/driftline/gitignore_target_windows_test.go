@@ -40,7 +40,7 @@ func TestPrepareGitIgnoreRewriteFailsClosedBeforeCreatingTemp(t *testing.T) {
 
 	root := t.TempDir()
 	targetPath := filepath.Join(root, GitIgnorePath)
-	commit, cleanup, err := PrepareGitIgnoreRewrite(GitIgnoreSectionChange{
+	commit, cleanup, err := prepareGitIgnoreRewrite(GitIgnoreSectionChange{
 		TargetPath:    targetPath,
 		TargetMissing: true,
 		DesiredBytes:  []byte("desired\n"),
