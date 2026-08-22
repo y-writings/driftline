@@ -57,22 +57,22 @@ func (a initialAdoption) adopt() error {
 		return err
 	}
 
-	prepareSyncManifestCreate := a.prepareSyncManifestCreate
-	if prepareSyncManifestCreate == nil {
-		prepareSyncManifestCreate = prepareSyncManifestCreate
+	prepare := a.prepareSyncManifestCreate
+	if prepare == nil {
+		prepare = prepareSyncManifestCreate
 	}
-	commitSyncManifest, cleanupSyncManifest, err := prepareSyncManifestCreate(root, opts.SyncManifest)
+	commitSyncManifest, cleanupSyncManifest, err := prepare(root, opts.SyncManifest)
 	if err != nil {
 		return err
 	}
 	defer cleanupSyncManifest()
 
-	writeFileBytes := a.writeFileBytes
-	if writeFileBytes == nil {
-		writeFileBytes = writeFileBytes
+	write := a.writeFileBytes
+	if write == nil {
+		write = writeFileBytes
 	}
 	for _, template := range templates {
-		if err := writeFileBytes(template.targetPath, template.sourceBytes); err != nil {
+		if err := write(template.targetPath, template.sourceBytes); err != nil {
 			return err
 		}
 	}
