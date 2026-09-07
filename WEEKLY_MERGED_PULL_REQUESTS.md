@@ -1,5 +1,5 @@
-## [weekly-2026.08.24] - 2026-08-22
+## [weekly-2026.09.07] - 2026-09-06
 
-### 🐛 Bug Fixes
+### 📚 Documentation
 
-- Restore initial adoption defaults (#28)
+- *(changelog)* Update changelog (#25)
